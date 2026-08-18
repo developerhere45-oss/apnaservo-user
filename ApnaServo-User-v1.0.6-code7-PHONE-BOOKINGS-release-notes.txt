@@ -1,0 +1,8 @@
+Version 1.0.6 (code 7)
+
+- Removed the Offers item from the bottom navigation.
+- Booking history is now isolated to the signed-in mobile number account.
+- Removed legacy/default locally cached bookings from My Bookings.
+- Backend booking history is now the authoritative history for the current phone account.
+- Improved booking cache cleanup when users switch mobile number accounts.
+- Includes the latest stability, support, OTP, and no-internet experience improvements.

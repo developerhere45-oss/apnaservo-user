@@ -1,0 +1,10 @@
+<resources>
+    <string name="app_name">ApnaServo</string>
+    <string name="name_hint">Full name</string>
+    <string name="phone_hint">Phone number</string>
+    <string name="address_hint">Address</string>
+    <string name="issue_hint">Describe issue</string>
+    <string name="slot_hint">Preferred slot</string>
+    <string name="starting_visit_price">Starting visit price</string>
+    <string name="add_service">Add service</string>
+</resources>

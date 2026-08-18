@@ -1,0 +1,17 @@
+Version 1.0.6 (code 7)
+
+- Fixed the No Internet page Try Again action and restored the previous screen after reconnection.
+- Blocking offline page now appears only after sustained loss of Wi-Fi/mobile/ethernet, not during slow or reconnecting internet.
+- Updated Booking Details to match the supplied reference layout and actions.
+- Primary contact is always the authenticated Firebase/mobile-login number and can no longer be edited from a booking.
+- Fixed backend booking parsing for primaryPhone so existing bookings no longer show a missing primary contact.
+- Added silent Android SMS Retriever OTP auto-fill plus SMS User Consent fallback.
+- Moved reverse geocoding off the UI thread to prevent app-not-responding errors on slow devices.
+- Cleared Activity bitmap cache during teardown to reduce memory pressure.
+- Verified the Firebase Database org.json conflict is absent from the release runtime.
+
+OTP provider requirement:
+The MSG91 login OTP template must include this release app hash as its final line for silent OTP retrieval:
+0rNt+msjWFW5
+
+Without the hash, Android's SMS User Consent fallback can still fill the OTP after the user approves the SMS.

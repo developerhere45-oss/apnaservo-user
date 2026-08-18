@@ -1,0 +1,10 @@
+ApnaServo 1.0.6 (version code 7)
+
+- Introduced a redesigned AI Support experience with Namaste greeting, secure conversation indicator, quick-help categories and message suggestions.
+- Improved complaint handling so only the customer's actual complaint is sent for admin review.
+- Added complaint priority and escalation handling for sensitive issues.
+- Added live launch and booking availability awareness to support replies.
+- Added English, Hindi and Hinglish-friendly support with privacy and security guardrails.
+- Added a professional Verifying OTP loading state with duplicate-tap protection.
+- Improved support delivery, retry behavior and stability.
+- Added the new full-screen No Internet Connection experience with a functional Try Again action and automatic recovery when connectivity returns.

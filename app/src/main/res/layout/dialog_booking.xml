@@ -1,0 +1,100 @@
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:paddingLeft="18dp"
+        android:paddingTop="8dp"
+        android:paddingRight="18dp">
+
+        <EditText
+            android:id="@+id/nameInput"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="10dp"
+            android:background="@drawable/bg_input"
+            android:autofillHints="name"
+            android:hint="@string/name_hint"
+            android:inputType="textPersonName"
+            android:minHeight="52dp"
+            android:padding="12dp"
+            android:textColor="#17201C"
+            android:textColorHint="#607069"
+            android:textSize="15sp" />
+
+        <EditText
+            android:id="@+id/phoneInput"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="10dp"
+            android:background="@drawable/bg_input"
+            android:autofillHints="phone"
+            android:hint="@string/phone_hint"
+            android:inputType="phone"
+            android:maxLength="10"
+            android:minHeight="52dp"
+            android:padding="12dp"
+            android:textColor="#17201C"
+            android:textColorHint="#607069"
+            android:textSize="15sp" />
+
+        <EditText
+            android:id="@+id/addressInput"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="10dp"
+            android:background="@drawable/bg_input"
+            android:autofillHints="postalAddress"
+            android:gravity="top"
+            android:hint="@string/address_hint"
+            android:inputType="textMultiLine"
+            android:minHeight="76dp"
+            android:padding="12dp"
+            android:textColor="#17201C"
+            android:textColorHint="#607069"
+            android:textSize="15sp" />
+
+        <EditText
+            android:id="@+id/issueInput"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="10dp"
+            android:background="@drawable/bg_input"
+            android:gravity="top"
+            android:hint="@string/issue_hint"
+            android:importantForAutofill="no"
+            android:inputType="textMultiLine"
+            android:minHeight="76dp"
+            android:padding="12dp"
+            android:textColor="#17201C"
+            android:textColorHint="#607069"
+            android:textSize="15sp" />
+
+        <EditText
+            android:id="@+id/slotInput"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="10dp"
+            android:background="@drawable/bg_input"
+            android:hint="@string/slot_hint"
+            android:importantForAutofill="no"
+            android:inputType="text"
+            android:minHeight="52dp"
+            android:padding="12dp"
+            android:textColor="#17201C"
+            android:textColorHint="#607069"
+            android:textSize="15sp" />
+
+        <TextView
+            android:id="@+id/bookingSummary"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:lineSpacingExtra="2dp"
+            android:paddingTop="6dp"
+            android:textColor="#607069"
+            android:textSize="14sp" />
+    </LinearLayout>
+</ScrollView>

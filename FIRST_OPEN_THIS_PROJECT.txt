@@ -1,0 +1,16 @@
+IMPORTANT
+
+Open the project folder, not a Java file.
+
+Correct folder:
+fixmate-android
+
+Wrong:
+app/src/main/java/com/fixmate/app/MainActivity.java
+
+If Android Studio already opened MainActivity.java as a project, close that window.
+Then double-click:
+open-project-folder-only.bat
+
+If emulator or port errors appear, double-click:
+repair-ports-and-build.bat

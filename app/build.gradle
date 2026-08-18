@@ -1,0 +1,133 @@
+plugins {
+    id "com.android.application"
+    id "com.google.gms.google-services"
+    id "com.google.firebase.crashlytics"
+}
+
+def releaseProperties = new Properties()
+def releasePropertiesFile = rootProject.file("upload-keystore.properties")
+if (releasePropertiesFile.exists()) {
+    releasePropertiesFile.withInputStream { releaseProperties.load(it) }
+}
+def hasReleaseSigning = ["storeFile", "storePassword", "keyAlias", "keyPassword"].every { key ->
+    releaseProperties.getProperty(key)?.trim()
+}
+
+android {
+    namespace = "com.fixmate.app"
+    compileSdk = 36
+
+    defaultConfig {
+        applicationId = "com.apnaservo.user"
+        minSdk = 23
+        targetSdk = 36
+        versionCode = (project.findProperty("VERSION_CODE") ?: "1").toString().toInteger()
+        versionName = (project.findProperty("VERSION_NAME") ?: "1.0.0").toString()
+        buildConfigField "String", "APNA_SERVO_API_BASE_URL", "\"${project.findProperty("APNA_SERVO_API_BASE_URL") ?: "https://apnaservobk-1.onrender.com/api"}\""
+        buildConfigField "String", "APNA_SERVO_SOCKET_URL", "\"${project.findProperty("APNA_SERVO_SOCKET_URL") ?: "https://apnaservobk-1.onrender.com"}\""
+    }
+
+    buildFeatures {
+        buildConfig = true
+    }
+
+    compileOptions {
+        sourceCompatibility = JavaVersion.VERSION_17
+        targetCompatibility = JavaVersion.VERSION_17
+    }
+
+    signingConfigs {
+        if (hasReleaseSigning) {
+            release {
+                storeFile file(releaseProperties.getProperty("storeFile"))
+                storePassword releaseProperties.getProperty("storePassword")
+                keyAlias releaseProperties.getProperty("keyAlias")
+                keyPassword releaseProperties.getProperty("keyPassword")
+            }
+        }
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled = true
+            shrinkResources = true
+            proguardFiles getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro"
+            if (hasReleaseSigning) {
+                signingConfig signingConfigs.release
+            }
+        }
+    }
+}
+
+dependencies {
+    implementation platform("com.google.firebase:firebase-bom:34.16.0")
+    implementation "com.google.firebase:firebase-analytics"
+    implementation "com.google.firebase:firebase-crashlytics"
+    implementation "com.google.firebase:firebase-auth"
+    implementation "com.google.firebase:firebase-firestore"
+    implementation "com.google.firebase:firebase-database"
+    implementation "com.google.firebase:firebase-messaging"
+    implementation "com.google.firebase:firebase-storage"
+    implementation "com.google.android.gms:play-services-auth:21.6.0"
+    implementation "com.google.android.gms:play-services-auth-api-phone:18.2.0"
+    implementation "com.squareup.okhttp3:okhttp:4.12.0"
+    implementation "com.github.bumptech.glide:glide:4.16.0"
+    // Socket.IO still declares the ancient org.json:json:20090211 artifact.
+    // Android already provides org.json, and packaging the old JVM copy shadows
+    // the framework classes. That binary mismatch crashes Firebase Database's
+    // runloop in JSONWriter with NoSuchFieldError on newer Android releases.
+    implementation("io.socket:socket.io-client:2.1.2") {
+        exclude group: "org.json", module: "json"
+    }
+    testImplementation "junit:junit:4.13.2"
+    testImplementation "org.json:json:20240303"
+}
+
+def verifyPlayReleaseTask = tasks.register("verifyPlayRelease") {
+    group = "verification"
+    description = "Checks the non-secret configuration required for a Play upload bundle."
+    doLast {
+        def missing = []
+        if (!hasReleaseSigning) missing << "upload-keystore.properties with storeFile, storePassword, keyAlias and keyPassword"
+        if (android.defaultConfig.versionCode <= 0) missing << "a positive VERSION_CODE"
+        if (!missing.isEmpty()) throw new GradleException("Play release is blocked: " + missing.join(", "))
+    }
+}
+
+tasks.configureEach {
+    if (name == "bundleRelease") {
+        dependsOn(verifyPlayReleaseTask)
+    }
+}
+
+tasks.register("bundlePlayRelease") {
+    group = "build"
+    description = "Builds a signed, Play-upload-ready Android App Bundle after verification."
+    dependsOn "bundleRelease"
+}
+
+tasks.register("generateAppControlFeatureRegistry") {
+    group = "verification"
+    description = "Generates the users Feature Registry payload from Android FeatureRegistry.java."
+    def registrySource = file("src/main/java/com/fixmate/app/FeatureRegistry.java")
+    def registryOutput = layout.buildDirectory.file("generated/app-control/feature-registry-users.json")
+    inputs.file(registrySource)
+    outputs.file(registryOutput)
+    doLast {
+        def matcher = (registrySource.getText("UTF-8") =~ /entry\("([a-z][a-z0-9_]*)",\s*"([^"]+)",\s*"([^"]+)"\)/)
+        def features = []
+        matcher.each { match ->
+            features << [id: match[1], audience: "users", description: match[2], surface: match[3], defaultEnabled: true]
+        }
+        if (features.isEmpty()) throw new GradleException("No FeatureRegistry entries found")
+        def payload = [schemaVersion: 1, source: "android-user-app", audience: "users", features: features]
+        def outputFile = registryOutput.get().asFile
+        outputFile.parentFile.mkdirs()
+        outputFile.setText(groovy.json.JsonOutput.prettyPrint(groovy.json.JsonOutput.toJson(payload)) + System.lineSeparator(), "UTF-8")
+        println("Feature Registry: " + outputFile.absolutePath)
+    }
+}
+
+tasks.named("check") {
+    dependsOn("generateAppControlFeatureRegistry")
+}

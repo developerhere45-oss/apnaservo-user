@@ -1,0 +1,12 @@
+Version 1.0.6 (code 7)
+
+- Removed Edit Profile from Settings and removed the profile edit affordance.
+- Rebuilt Legal & Support to match the supplied production reference layout.
+- Added clear policy, privacy, refund, safety, support, and account deletion actions.
+- Rebuilt Saved Addresses as a polished bottom sheet matching the supplied reference.
+- Removed all hardcoded sample addresses.
+- Confirmed booking addresses are saved automatically and isolated by mobile-number account.
+- Addresses from the current account's backend booking history sync into Saved Addresses.
+- Users can select a saved address as their default service address.
+- Removed the duplicate location-detection page shown when opening the app.
+- Location permission remains available only where it is actually needed during booking.

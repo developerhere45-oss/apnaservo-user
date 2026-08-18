@@ -1,0 +1,5 @@
+<lint>
+    <issue id="AndroidGradlePluginVersion" severity="ignore" />
+    <issue id="HardcodedText" severity="ignore" />
+    <issue id="SetTextI18n" severity="ignore" />
+</lint>

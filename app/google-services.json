@@ -1,0 +1,117 @@
+{
+  "project_info": {
+    "project_number": "525255192682",
+    "firebase_url": "https://apna-servo-default-rtdb.firebaseio.com",
+    "project_id": "apna-servo",
+    "storage_bucket": "apna-servo.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:525255192682:android:0ea8c88386befd3b579a13",
+        "android_client_info": {
+          "package_name": "com.apnaservo.partner"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "525255192682-qe0l41432sdcvq5go6im05thvmimktr9.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.apnaservo.partner",
+            "certificate_hash": "79ad570c201a32f21e3ed392ba92d3941303c3bf"
+          }
+        },
+        {
+          "client_id": "525255192682-0n4dnbed39j3h1706j6u5egr2so595up.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyD8X6xkQ67FRPhJRyiZEv1SqZmjiNxnR9c"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "525255192682-0n4dnbed39j3h1706j6u5egr2so595up.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    },
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:525255192682:android:8926b4a717e1bece579a13",
+        "android_client_info": {
+          "package_name": "com.apnaservo.user"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "525255192682-0n4dnbed39j3h1706j6u5egr2so595up.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyD8X6xkQ67FRPhJRyiZEv1SqZmjiNxnR9c"
+        },
+        {
+          "current_key": "AIzaSyAwri3PUFEjs4k_EYOk_LZ7-i9YRe-D6oo"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "525255192682-0n4dnbed39j3h1706j6u5egr2so595up.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    },
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:525255192682:android:468f87d560db3c60579a13",
+        "android_client_info": {
+          "package_name": "com.fixmate.app"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "525255192682-uanfrrl63as5peejf6irbgktr3a8j6gh.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.fixmate.app",
+            "certificate_hash": "79ad570c201a32f21e3ed392ba92d3941303c3bf"
+          }
+        },
+        {
+          "client_id": "525255192682-0n4dnbed39j3h1706j6u5egr2so595up.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyD8X6xkQ67FRPhJRyiZEv1SqZmjiNxnR9c"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "525255192682-0n4dnbed39j3h1706j6u5egr2so595up.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

@@ -1,0 +1,4 @@
+<resources>
+    <!-- Keep the launcher icon on-brand in dark mode as well. -->
+    <color name="apnaservo_launcher_background">#FFF8F5</color>
+</resources>

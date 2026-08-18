@@ -1,0 +1,14 @@
+.gradle/
+build/
+local.properties
+upload-keystore.properties
+*.jks
+*.keystore
+app/build/
+*.iml
+.idea/
+
+# Generated release packages are distributed separately, not versioned as source.
+*.apk
+*.aab
+*.log

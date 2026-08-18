@@ -1,0 +1,13 @@
+Version 1.0.7 (code 8)
+
+- Fixed Try Again on the No Internet screen.
+- No Internet screen now appears only after sustained complete connectivity loss, not during slow internet.
+- Updated Booking Details to match the supplied reference design.
+- Primary booking contact is locked to the authenticated mobile-login number.
+- Fixed existing bookings showing a missing primary number.
+- Added Android SMS Retriever OTP auto-fill and SMS User Consent fallback.
+- Moved reverse geocoding off the UI thread to reduce freezes and app-not-responding errors.
+- Includes the latest profile, legal, saved-address, booking-history, support and stability improvements.
+
+For silent OTP retrieval, keep this release app hash as the final line of the MSG91 OTP template:
+0rNt+msjWFW5
