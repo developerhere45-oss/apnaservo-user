@@ -13,7 +13,7 @@ public final class BookingItem {
 
     public BookingItem(Service service, int quantity) {
         this.service = service;
-        this.quantity = Math.max(1, quantity);
+        this.quantity = Math.max(1, Math.min(99, quantity));
     }
 
     public Service getService() {
@@ -33,7 +33,9 @@ public final class BookingItem {
     }
 
     public int getLineTotal() {
-        return service.getPrice() * quantity;
+        if (service == null) return 0;
+        long total = (long) service.getPrice() * quantity;
+        return (int) Math.min(total, Integer.MAX_VALUE);
     }
 
     public JSONObject toJson() throws JSONException {

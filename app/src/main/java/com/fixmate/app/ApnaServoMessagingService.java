@@ -26,6 +26,7 @@ import java.util.Set;
 
 public class ApnaServoMessagingService extends FirebaseMessagingService {
     private static final String PREFS = "fixmate_prefs_v2";
+    private static final String SECURE_PREFS = PREFS + "_secure";
     private static final String KEY_FCM_TOKEN = "fcm_token";
     private static final String KEY_PUSH_BOOKING_ID = "push_booking_id";
     private static final String KEY_PUSH_BOOKING_STATUS = "push_booking_status";
@@ -81,8 +82,20 @@ public class ApnaServoMessagingService extends FirebaseMessagingService {
         String body = message.getNotification() == null
                 ? valueAny(data, "", "body", "message", "notificationBody", "notification_body")
                 : message.getNotification().getBody();
-        title = readableTitle(title, actionType, status);
-        body = readableBody(body, actionType, status, bookingId, type);
+        title = compact(readableTitle(title, actionType, status), 120);
+        body = compact(readableBody(body, actionType, status, bookingId, type), 500);
+        String arrivalLabel = valueAny(data, "", "partnerArrivalEstimateLabel", "arrivalEstimateLabel", "etaLabel", "eta");
+        boolean partnerAccepted = "accepted".equalsIgnoreCase(status)
+                || safe(type).toLowerCase(Locale.ROOT).contains("accepted")
+                || "booking_assigned".equalsIgnoreCase(category);
+        if (partnerAccepted && !arrivalLabel.isEmpty()) {
+            if (title.isEmpty() || "Partner assigned".equalsIgnoreCase(title) || "Booking update".equalsIgnoreCase(title)) {
+                title = compact("Partner arriving in " + arrivalLabel, 120);
+            }
+            if (body.isEmpty() || !body.toLowerCase(Locale.ROOT).contains(arrivalLabel.toLowerCase(Locale.ROOT))) {
+                body = compact("Partner arriving in " + arrivalLabel + ". Tap to track your booking.", 500);
+            }
+        }
         String imageUrl = valueAny(data, "", "imageUrl", "image_url", "bannerImageUrl", "banner_image_url");
         showNotification(
                 title,
@@ -281,13 +294,18 @@ public class ApnaServoMessagingService extends FirebaseMessagingService {
         if (data == null || keys == null) return fallback;
         for (String key : keys) {
             String result = data.get(key);
-            if (result != null && !result.trim().isEmpty()) return result.trim();
+            if (result != null && !result.trim().isEmpty()) return compact(result, 500);
         }
         return fallback;
     }
 
     private String safe(String value) {
-        return value == null ? "" : value.trim();
+        return compact(value, 500);
+    }
+
+    private String compact(String value, int maximumLength) {
+        String clean = value == null ? "" : value.trim();
+        return clean.length() <= maximumLength ? clean : clean.substring(0, maximumLength);
     }
 
     private boolean alreadyShown(String notificationId) {
@@ -315,10 +333,10 @@ public class ApnaServoMessagingService extends FirebaseMessagingService {
     private String value(Map<String, String> data, String key, String fallback) {
         if (data == null) return fallback;
         String result = data.get(key);
-        return result == null || result.trim().isEmpty() ? fallback : result.trim();
+        return result == null || result.trim().isEmpty() ? fallback : compact(result, 500);
     }
 
     private SecurePrefs securePrefs() {
-        return new SecurePrefs(this, PREFS);
+        return new SecurePrefs(this, SECURE_PREFS);
     }
 }

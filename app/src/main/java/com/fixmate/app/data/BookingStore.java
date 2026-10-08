@@ -9,9 +9,12 @@ import org.json.JSONArray;
 import org.json.JSONException;
 
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.List;
 
 public final class BookingStore {
+    private static final int MAX_BOOKINGS = 100;
+    private static final int MAX_STORED_CHARS = 256 * 1024;
     private static final String PREFS_NAME = "fixmate_bookings";
     private static final String KEY_BOOKINGS = "bookings";
     private static final String KEY_BOOKINGS_BACKUP = "bookings_backup";
@@ -31,6 +34,30 @@ public final class BookingStore {
             }
         }
         bookings.add(0, booking);
+        persist(bookings);
+    }
+
+    /**
+     * Applies a burst of remote snapshots with one encrypted read/write cycle.
+     * Realtime callbacks must not serialise the whole history once per event.
+     */
+    public void saveAll(Collection<Booking> snapshots) {
+        if (snapshots == null || snapshots.isEmpty()) {
+            return;
+        }
+        List<Booking> bookings = load();
+        for (Booking snapshot : snapshots) {
+            if (snapshot == null || snapshot.getId() == null || snapshot.getId().trim().isEmpty()) {
+                continue;
+            }
+            for (int index = bookings.size() - 1; index >= 0; index--) {
+                Booking existing = bookings.get(index);
+                if (existing != null && snapshot.getId().equals(existing.getId())) {
+                    bookings.remove(index);
+                }
+            }
+            bookings.add(0, snapshot);
+        }
         persist(bookings);
     }
 
@@ -75,9 +102,12 @@ public final class BookingStore {
 
     private List<Booking> parse(String raw) {
         List<Booking> bookings = new ArrayList<>();
+        if (raw == null || raw.length() > MAX_STORED_CHARS) {
+            return null;
+        }
         try {
             JSONArray array = new JSONArray(raw);
-            for (int index = 0; index < array.length(); index++) {
+            for (int index = 0; index < Math.min(array.length(), MAX_BOOKINGS); index++) {
                 try {
                     bookings.add(Booking.fromJson(array.getJSONObject(index)));
                 } catch (JSONException ignored) {
@@ -91,7 +121,17 @@ public final class BookingStore {
     }
 
     private void persist(List<Booking> bookings) {
-        String payload = toJson(bookings == null ? new ArrayList<>() : bookings).toString();
+        List<Booking> bounded = bookings == null ? new ArrayList<>() : new ArrayList<>(bookings);
+        if (bounded.size() > MAX_BOOKINGS) {
+            bounded = new ArrayList<>(bounded.subList(0, MAX_BOOKINGS));
+        }
+        String payload = toJson(bounded).toString();
+        if (payload.length() > MAX_STORED_CHARS) {
+            // Keep the newest valid history rather than persisting an
+            // oversized payload that could block a later app launch.
+            bounded = new ArrayList<>(bounded.subList(0, Math.min(20, bounded.size())));
+            payload = toJson(bounded).toString();
+        }
         preferences.putString(KEY_BOOKINGS, payload);
         preferences.putString(KEY_BOOKINGS_BACKUP, payload);
     }

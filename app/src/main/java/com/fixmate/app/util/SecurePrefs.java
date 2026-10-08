@@ -67,10 +67,11 @@ public final class SecurePrefs {
             return;
         }
         try {
-            byte[] iv = new byte[IV_BYTES];
-            new SecureRandom().nextBytes(iv);
             Cipher cipher = Cipher.getInstance(TRANSFORMATION);
-            cipher.init(Cipher.ENCRYPT_MODE, secretKey(), new GCMParameterSpec(GCM_TAG_BITS, iv));
+            // Android Keystore requires a provider-generated IV when randomized
+            // encryption is enabled. A caller-supplied IV rejects every write.
+            cipher.init(Cipher.ENCRYPT_MODE, secretKey());
+            byte[] iv = cipher.getIV();
             byte[] cipherText = cipher.doFinal(value.getBytes(StandardCharsets.UTF_8));
             byte[] packed = new byte[iv.length + cipherText.length];
             System.arraycopy(iv, 0, packed, 0, iv.length);

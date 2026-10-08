@@ -7,11 +7,15 @@ import android.net.NetworkCapabilities;
 import android.net.NetworkRequest;
 import android.os.Handler;
 import android.os.Looper;
+import android.util.Log;
 
 import java.util.LinkedHashSet;
 import java.util.Set;
 
 final class NetworkStateMonitor {
+    private static final String TAG = "ApnaServoNetwork";
+    private static final long ONLINE_STABILIZE_MS = 250L;
+    private static final long OFFLINE_STABILIZE_MS = 900L;
     enum State {
         ONLINE,
         OFFLINE,
@@ -31,7 +35,8 @@ final class NetworkStateMonitor {
     private final Set<Listener> listeners = new LinkedHashSet<>();
     private ConnectivityManager connectivityManager;
     private ConnectivityManager.NetworkCallback callback;
-    private State state = State.CONNECTING;
+    private Runnable pendingTransportUpdate;
+    private volatile State state = State.CONNECTING;
 
     static synchronized NetworkStateMonitor get(Context context) {
         if (instance == null) {
@@ -58,17 +63,20 @@ final class NetworkStateMonitor {
         callback = new ConnectivityManager.NetworkCallback() {
             @Override
             public void onAvailable(Network network) {
-                main.post(() -> setState(State.RECONNECTING));
+                scheduleTransportUpdate(ONLINE_STABILIZE_MS);
             }
 
             @Override
             public void onLost(Network network) {
-                main.post(NetworkStateMonitor.this::updateFromActiveNetwork);
+                // Android commonly reports the old Wi-Fi network as lost while
+                // mobile data is already taking over. Debounce that hand-over so
+                // one switch does not become OFFLINE -> ONLINE event spam.
+                scheduleTransportUpdate(OFFLINE_STABILIZE_MS);
             }
 
             @Override
             public void onCapabilitiesChanged(Network network, NetworkCapabilities capabilities) {
-                main.post(NetworkStateMonitor.this::updateFromActiveNetwork);
+                scheduleTransportUpdate(ONLINE_STABILIZE_MS);
             }
         };
         try {
@@ -81,6 +89,12 @@ final class NetworkStateMonitor {
     }
 
     void stop() {
+        if (Looper.myLooper() != Looper.getMainLooper()) {
+            main.post(this::stop);
+            return;
+        }
+        if (pendingTransportUpdate != null) main.removeCallbacks(pendingTransportUpdate);
+        pendingTransportUpdate = null;
         if (connectivityManager != null && callback != null) {
             try {
                 connectivityManager.unregisterNetworkCallback(callback);
@@ -95,14 +109,21 @@ final class NetworkStateMonitor {
         if (listener == null) {
             return;
         }
+        if (Looper.myLooper() != Looper.getMainLooper()) {
+            main.post(() -> addListener(listener));
+            return;
+        }
         listeners.add(listener);
         listener.onNetworkStateChanged(state, state);
     }
 
     void removeListener(Listener listener) {
-        if (listener != null) {
-            listeners.remove(listener);
+        if (listener == null) return;
+        if (Looper.myLooper() != Looper.getMainLooper()) {
+            main.post(() -> removeListener(listener));
+            return;
         }
+        listeners.remove(listener);
     }
 
     State getState() {
@@ -146,10 +167,23 @@ final class NetworkStateMonitor {
     }
 
     void markConnectionProblem() {
-        updateFromActiveNetwork();
-        if (isOnline()) {
-            setState(State.RECONNECTING);
-        }
+        // A server/socket timeout is not a device connectivity transition.
+        // Keep transport connectivity separate from request quality; otherwise
+        // every failed API followed by any successful API generates a fake
+        // "Connection restored" transition and a full resync feedback loop.
+        if (hasInternetTransport()) markRequestSlow();
+        else scheduleTransportUpdate(OFFLINE_STABILIZE_MS);
+    }
+
+    private void scheduleTransportUpdate(long delayMs) {
+        main.post(() -> {
+            if (pendingTransportUpdate != null) main.removeCallbacks(pendingTransportUpdate);
+            pendingTransportUpdate = () -> {
+                pendingTransportUpdate = null;
+                updateFromActiveNetwork();
+            };
+            main.postDelayed(pendingTransportUpdate, delayMs);
+        });
     }
 
     private void updateFromActiveNetwork() {
@@ -172,20 +206,36 @@ final class NetworkStateMonitor {
                 setState(State.ONLINE);
                 return;
             }
-            setState(State.CONNECTING);
+            // While reconnecting, do not erase a confirmed OFFLINE state until
+            // Android validates actual internet access. This preserves exactly
+            // one meaningful OFFLINE -> ONLINE recovery notification.
+            if (state != State.OFFLINE) setState(State.CONNECTING);
         } catch (Exception ignored) {
-            setState(State.ONLINE);
+            if (state == State.CONNECTING) setState(State.OFFLINE);
         }
     }
 
     private void setState(State next) {
-        State previous = state;
-        state = next;
-        if (previous == next) {
+        // OkHttp completion callbacks call markRequestSuccess/markConnectionProblem
+        // from worker threads. Every listener ultimately updates Activity views, so
+        // state mutation and delivery must always be serialized on Android's UI looper.
+        if (Looper.myLooper() != Looper.getMainLooper()) {
+            main.post(() -> setState(next));
             return;
         }
+        State previous = state;
+        if (previous == next) {
+            Log.d(TAG, "Connectivity callback ignored: state unchanged " + next);
+            return;
+        }
+        state = next;
+        Log.i(TAG, "Network state changed: " + previous + " -> " + next);
         for (Listener listener : new LinkedHashSet<>(listeners)) {
-            listener.onNetworkStateChanged(next, previous);
+            try {
+                listener.onNetworkStateChanged(next, previous);
+            } catch (RuntimeException error) {
+                Log.e(TAG, "Network listener failed", error);
+            }
         }
     }
 }

@@ -30,8 +30,11 @@ final class NetworkError {
     }
 
     static String forHttp(int code) {
-        if (code == 401 || code == 403) {
+        if (code == 401) {
             return "Session Expired\nPlease login again to continue.";
+        }
+        if (code == 403) {
+            return "Action Not Allowed\nYou are signed in, but this action is not allowed.";
         }
         if (code == 404) {
             return "Not Found\nWe couldn't find the requested information. Please refresh and try again.";

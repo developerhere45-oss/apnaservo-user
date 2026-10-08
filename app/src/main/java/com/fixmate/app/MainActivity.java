@@ -4,10 +4,12 @@ import android.annotation.SuppressLint;
 import android.Manifest;
 import android.animation.AnimatorSet;
 import android.animation.Animator;
+import android.animation.LayoutTransition;
 import android.animation.ObjectAnimator;
 import android.animation.ValueAnimator;
 import android.app.Activity;
 import android.app.ActivityManager;
+import android.app.ApplicationExitInfo;
 import android.app.AlertDialog;
 import android.app.DatePickerDialog;
 import android.app.Notification;
@@ -20,6 +22,7 @@ import android.content.BroadcastReceiver;
 import android.content.Intent;
 import android.content.IntentFilter;
 import android.content.pm.PackageManager;
+import android.content.pm.ActivityInfo;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.graphics.Canvas;
@@ -27,6 +30,7 @@ import android.graphics.Color;
 import android.graphics.Paint;
 import android.graphics.Path;
 import android.graphics.RectF;
+import android.graphics.RadialGradient;
 import android.graphics.Shader;
 import android.graphics.LinearGradient;
 import android.graphics.Typeface;
@@ -48,6 +52,7 @@ import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
+import android.os.SystemClock;
 import android.os.VibrationEffect;
 import android.os.Vibrator;
 import android.provider.MediaStore;
@@ -70,6 +75,7 @@ import android.view.ViewGroup;
 import android.view.Window;
 import android.view.WindowManager;
 import android.view.animation.AccelerateDecelerateInterpolator;
+import android.view.animation.DecelerateInterpolator;
 import android.view.animation.LinearInterpolator;
 import android.window.OnBackInvokedDispatcher;
 import android.widget.EditText;
@@ -104,19 +110,17 @@ import com.bumptech.glide.load.engine.DiskCacheStrategy;
 import com.bumptech.glide.request.RequestListener;
 import com.bumptech.glide.request.RequestOptions;
 import com.bumptech.glide.request.target.Target;
-import com.google.android.gms.auth.api.signin.GoogleSignIn;
-import com.google.android.gms.auth.api.signin.GoogleSignInAccount;
-import com.google.android.gms.auth.api.signin.GoogleSignInClient;
-import com.google.android.gms.auth.api.signin.GoogleSignInOptions;
 import com.google.android.gms.auth.api.phone.SmsRetriever;
-import com.google.android.gms.common.api.ApiException;
 import com.google.android.gms.common.api.CommonStatusCodes;
 import com.google.android.gms.common.api.Status;
-import com.google.android.gms.tasks.Task;
-import com.google.firebase.auth.AuthCredential;
+import com.google.android.gms.location.FusedLocationProviderClient;
+import com.google.android.gms.location.LocationCallback;
+import com.google.android.gms.location.LocationRequest;
+import com.google.android.gms.location.LocationResult;
+import com.google.android.gms.location.LocationServices;
+import com.google.android.gms.location.Priority;
 import com.google.firebase.auth.FirebaseAuth;
 import com.google.firebase.auth.FirebaseUser;
-import com.google.firebase.auth.GoogleAuthProvider;
 import com.google.firebase.auth.UserProfileChangeRequest;
 import com.google.firebase.crashlytics.FirebaseCrashlytics;
 import com.google.firebase.database.DataSnapshot;
@@ -167,9 +171,9 @@ public class MainActivity extends Activity {
     private static final int LOGIN_BG = Color.rgb(255, 248, 247);
     private static final int LOGIN_ROSE = Color.rgb(225, 42, 83);
     private static final int LOGIN_ROSE_DARK = Color.rgb(192, 21, 65);
-    private static final int BOOKING_THEME = Color.rgb(255, 63, 95);
-    private static final int BOOKING_THEME_DARK = Color.rgb(126, 0, 18);
-    private static final int BOOKING_THEME_SOFT = Color.rgb(255, 238, 242);
+    private int BOOKING_THEME = Color.rgb(255, 63, 95);
+    private int BOOKING_THEME_DARK = Color.rgb(126, 0, 18);
+    private int BOOKING_THEME_SOFT = Color.rgb(255, 238, 242);
     private static final int LOGIN_SOFT = Color.rgb(255, 238, 241);
     private static final int GREEN = Color.rgb(22, 177, 111);
     private static final int PREMIER = Color.rgb(170, 116, 121);
@@ -177,12 +181,24 @@ public class MainActivity extends Activity {
     private static final int CREAM = Color.rgb(255, 248, 244);
     private static final int ORANGE_SOFT = Color.rgb(248, 225, 225);
     private static final String PREFS = "fixmate_prefs_v2";
+    // Keep encrypted values in a different file from the legacy/plain preferences.  The
+    // migration helpers remove the legacy value after writing the encrypted one, so both
+    // stores must never point at the same SharedPreferences file.
+    private static final String SECURE_PREFS = PREFS + "_secure";
     private static final String KEY_FCM_TOKEN = "fcm_token";
     private static final String KEY_CUSTOMER_PHONE = "customer_phone";
     private static final String KEY_BOOKING_OWNER_PHONE = "booking_owner_phone";
     private static final String KEY_SAVED_ADDRESSES = "saved_service_addresses";
     private static final String KEY_SAVED_ADDRESS_OWNER_PHONE = "saved_address_owner_phone";
     private static final String KEY_DEFAULT_SAVED_ADDRESS = "default_saved_service_address";
+    private static final String KEY_DETECTED_HOME_ADDRESS = "detected_home_address";
+    private static final String KEY_DETECTED_HOME_CITY = "detected_home_city";
+    private static final String KEY_DETECTED_HOME_LAT = "detected_home_lat";
+    private static final String KEY_DETECTED_HOME_LNG = "detected_home_lng";
+    private static final String KEY_RAIN_CANDIDATE_SINCE = "rain_candidate_since";
+    private static final String KEY_RAIN_LAST_SEEN_AT = "rain_last_seen_at";
+    private static final String KEY_RAIN_CANDIDATE_LAT = "rain_candidate_lat";
+    private static final String KEY_RAIN_CANDIDATE_LNG = "rain_candidate_lng";
     private static final String KEY_CUSTOMER_NAME = "customer_name";
     private static final String KEY_CUSTOMER_EMAIL = "customer_email";
     private static final String KEY_USER_PUBLIC_ID = "user_public_id";
@@ -203,18 +219,18 @@ public class MainActivity extends Activity {
     private static final String CHANNEL_BOOKING_REQUESTS = "user_booking_updates_v2";
     private static final String PRIVACY_POLICY_URL = "https://www.apnaservo.com/privacy-policy";
     private static final String DELETE_ACCOUNT_URL = "https://www.apnaservo.com/delete-account";
-    private static final long SPLASH_DELAY_MS = 900L;
     private static final long BOOKING_STATUS_REFRESH_MS = 15000L;
     private static final long BOOKING_RETRY_DELAY_MS = 2200L;
     private static final long BOOKING_ASSIGN_PROGRESS_MS = 180000L;
     private static final int BOOKING_RETRY_LIMIT = 3;
     private static final int LOCATION_PERMISSION_REQUEST = 7001;
     private static final int NOTIFICATION_PERMISSION_REQUEST = 7002;
-    private static final int GOOGLE_SIGN_IN_REQUEST = 7101;
     private static final int SUPPORT_CAMERA_PERMISSION_REQUEST = 7102;
     private static final int SUPPORT_CAMERA_REQUEST = 7103;
     private static final int OTP_SMS_CONSENT_REQUEST = 7104;
     private static final long SUPPORT_UPLOAD_MAX_BYTES = 2_500_000L;
+    private static final int MAX_SUPPORT_MESSAGE_CHARS = 1200;
+    private static final long SUPPORT_DUPLICATE_SEND_WINDOW_MS = 8000L;
     private static final int NOTIFICATION_PAGE_SIZE = 25;
 
     private final class OtpEditText extends EditText {
@@ -287,7 +303,6 @@ public class MainActivity extends Activity {
     private List<Service> services;
     private BookingStore bookingStore;
     private FirebaseAuth firebaseAuth;
-    private GoogleSignInClient googleSignInClient;
     private FirebaseFirestore firestore;
     private FirebaseDatabase realtimeDatabase;
     private FirebaseStorage firebaseStorage;
@@ -297,12 +312,25 @@ public class MainActivity extends Activity {
     private AppControlConfig appControl = AppControlConfig.DEFAULT;
     private AlertDialog appUpdateDialog;
     private AlertDialog appStatusDialog;
+    private AlertDialog serviceAvailabilityDialog;
+    private AppControlConfig.AppMode appStatusDialogMode;
     private boolean softUpdateDismissedThisSession;
     private boolean activityDestroyed;
+    private boolean activityForeground;
+    private boolean memoryPressureMode;
+    private Boolean constrainedDeviceCache;
     private SecurePrefs securePrefs;
     private String pendingCustomerOtpRequestId = "";
     private String pendingCustomerOtpPhone = "";
     private String pendingCustomerOtpName = "";
+    private static final long OTP_VERIFY_TIMEOUT_MS = 25_000L;
+    private static final int OTP_DEFAULT_TTL_SECONDS = 900;
+    private boolean otpVerificationInFlight;
+    private int otpVerificationGeneration;
+    private int customerOtpRequestGeneration;
+    private Runnable otpVerificationTimeoutRunnable;
+    private View activeOtpVerifyButton;
+    private long pendingCustomerOtpExpiresAtElapsedRealtime;
     private BroadcastReceiver customerOtpReceiver;
     private EditText[] activeCustomerOtpBoxes;
     private ConnectivityManager connectivityManager;
@@ -328,6 +356,7 @@ public class MainActivity extends Activity {
     private final Map<String, String> bookingStatusCache = new HashMap<>();
     private final Map<String, String> bookingPartnerNameCache = new HashMap<>();
     private final Map<String, String> bookingPartnerPhoneCache = new HashMap<>();
+    private final Map<String, String> bookingServiceContactRoleCache = new HashMap<>();
     private final Map<String, String> bookingPartnerPhotoCache = new HashMap<>();
     private final Map<String, Double> bookingPartnerRatingCache = new HashMap<>();
     private final Map<String, Integer> bookingPartnerRatingCountCache = new HashMap<>();
@@ -340,6 +369,18 @@ public class MainActivity extends Activity {
         }
     };
     private final ExecutorService geocoderExecutor = Executors.newSingleThreadExecutor();
+    // Large source artwork must never be decoded while the first screen is being drawn.
+    private final ExecutorService artworkExecutor = Executors.newSingleThreadExecutor();
+    // Socket, Firestore and RTDB callbacks are delivered on the main thread.  Persisting an
+    // encrypted, JSON booking history there caused a burst of location/status updates to block UI.
+    private final ExecutorService bookingPersistenceExecutor = Executors.newSingleThreadExecutor();
+    private final Object bookingPersistenceLock = new Object();
+    private final Map<String, Booking> pendingBookingPersistence = new HashMap<>();
+    private boolean bookingPersistenceDrainScheduled;
+    private String lastBookingBreadcrumb = "";
+    private long lastBookingBreadcrumbAt;
+    private int homeRenderGeneration;
+    private boolean serviceAreaBannerDismissedOnCurrentHome;
     private Booking latestBooking;
     private Service selectedService;
     private EditText problemInput;
@@ -380,6 +421,9 @@ public class MainActivity extends Activity {
     private View supportFeedbackView;
     private View supportTypingView;
     private final Map<String, TextView> supportStatusViews = new HashMap<>();
+    private final Map<String, String> supportDeliveryStates = new HashMap<>();
+    private final Map<String, Boolean> supportRenderedMessageIds = new HashMap<>();
+    private final Map<String, Long> supportRenderedUserBodies = new HashMap<>();
     private final Map<String, Boolean> bookingChatRendered = new HashMap<>();
     private String selectedDate = "";
     private String selectedTime = "";
@@ -391,9 +435,12 @@ public class MainActivity extends Activity {
     private String selectedLaundryServiceType = "Wash & Fold";
     private final Map<String, Integer> selectedLaundryItems = new LinkedHashMap<>();
     private final Map<String, FrameLayout> laundryItemCards = new HashMap<>();
+    private final Map<String, EditText> remoteBookingInputs = new LinkedHashMap<>();
+    private Bitmap laundryItemCatalogBitmap;
     private LinearLayout laundrySelectedItemsContainer;
     private TextView laundrySelectedItemsBadge;
     private String selectedCleaningType = "Home Cleaning";
+    private String selectedCleaningPricingOptionId = "";
     private String selectedApplianceType = "Fridge Repair";
     private String selectedCommercialServiceTitle = "Commercial AC Service";
     private String selectedCommercialServiceId = "ac";
@@ -412,12 +459,17 @@ public class MainActivity extends Activity {
     private final List<String> screenHistory = new ArrayList<>();
     private boolean restoringScreen;
     private final Handler carouselHandler = new Handler(Looper.getMainLooper());
+    private final Handler bookingsLoadingHandler = new Handler(Looper.getMainLooper());
     private Runnable carouselRunnable;
     private Runnable partnerAssignmentRunnable;
     private Runnable bookingStatusRunnable;
     private ObjectAnimator trustRibbonAnimator;
     private boolean bookingStatusPollInFlight;
+    private int bookingSyncGeneration;
     private String bookingSuccessSplashShownForId = "";
+    private boolean homeLaunchLoadingShown;
+    private View homeLaunchLoadingOverlay;
+    private View bookingsLoadingOverlay;
     private String paymentVerificationWaitingBookingId = "";
     private int bannerIndex;
     private String assignedPartnerName = "ApnaServo Partner";
@@ -427,6 +479,7 @@ public class MainActivity extends Activity {
     private int selectedPartnerRating = 0;
     private String selectedPartnerRatingBookingId = "";
     private boolean partnerRatingSubmitting;
+    private EditText partnerRatingFeedbackInput;
     private String remoteBookingStatus = "pending";
     private String latestBackendBookingId = "";
     private String selectedTrackBookingId = "";
@@ -436,15 +489,85 @@ public class MainActivity extends Activity {
     private long remoteQuoteExpiresAtMillis = 0L;
     private int remoteQuoteCounterAmount = 0;
     private String remoteQuoteCounterMessage = "";
+    private JSONObject remoteServiceWorkDetails;
     private String remotePartnerArrivalLabel = "";
     private long remoteExpectedArrivalAtMillis = 0L;
+    private String remoteLaundryShopName = "";
+    private String remoteLaundryShopLocation = "";
+    private String remoteLaundryStaffName = "";
+    private String remoteLaundryStaffRole = "";
+    private String remoteLaundryStaffPhotoUrl = "";
+    private String remoteLaundryTaskStatus = "unassigned";
     private Booking pendingBooking;
     private Service pendingBookingService;
     private int pendingBookingAttempts;
     private Runnable pendingBookingRetryRunnable;
     private double serviceLat = 26.1445;
     private double serviceLng = 91.7362;
+    private static final int HEADER_WEATHER_CLEAR = 0;
+    private static final int HEADER_WEATHER_RAIN = 1;
+    private static final long RAIN_CONFIRMATION_MS = 10L * 60L * 1000L;
+    private static final long RAIN_SAMPLE_MAX_GAP_MS = 150L * 1000L;
+    private int headerWeather = HEADER_WEATHER_CLEAR;
+    private long headerWeatherFetchedAtMillis;
+    private double headerWeatherLat = Double.NaN;
+    private double headerWeatherLng = Double.NaN;
+    private boolean headerWeatherRequestInFlight;
+    private View homeWeatherOverlay;
+    private View homeRainDelayNotice;
     private boolean hasServiceLocation;
+    private ServiceAreaPolicy.State homeServiceAreaState = ServiceAreaPolicy.State.UNKNOWN;
+    private boolean homeAvailabilityCheckStarted;
+    private boolean homeAvailabilityRequestInFlight;
+    private boolean homeAvailabilityPermissionRequested;
+    private boolean headerLocationPermissionPending;
+    private boolean headerLocationWaitingForSettings;
+    private AlertDialog homeLocationRequiredDialog;
+    private long lastHomeLocationPromptAtMillis;
+    private boolean headerPrefersDetectedLocation;
+    private boolean headerLocationFixReady;
+    private boolean headerAddressLookupFailed;
+    private boolean headerAddressResolvedForCurrentFix;
+    private double headerFixLat = Double.NaN;
+    private double headerFixLng = Double.NaN;
+    private long lastHomeScrollMillis;
+    private int homeGeocodeGeneration;
+    private LocationListener homeLocationMovementListener;
+    private FusedLocationProviderClient homeFusedLocationClient;
+    private LocationCallback homeFusedLocationCallback;
+    // Network providers may deliver several nearly-identical fixes per second. Starting a
+    // new reverse-geocode operation for each one used to invalidate the previous reply.
+    private static final long HOME_GEOCODE_DEDUP_WINDOW_MS = 45_000L;
+    // A saved header address is reusable only until the customer has moved about 50 metres.
+    // This avoids geocoding/GPS churn on every Home open while keeping the displayed address
+    // current for a real location change.
+    private static final double HOME_LOCATION_REFRESH_DISTANCE_KM = 0.05d;
+    private static final double HOME_GEOCODE_DEDUP_DISTANCE_KM = HOME_LOCATION_REFRESH_DISTANCE_KM;
+    // Network fixes on some devices are only accurate to ~100 m and can jump by more than
+    // 50 m while the phone is stationary. Keep the strict 50 m rule for a precise GPS fix,
+    // but give an approximate fix a stable anchor so it cannot repeatedly cancel geocoding.
+    private static final double HOME_APPROXIMATE_FIX_STABILITY_MIN_KM = 0.30d;
+    private static final double HOME_APPROXIMATE_FIX_STABILITY_MAX_KM = 0.50d;
+    private static final long HOME_LOCATION_MOVEMENT_INTERVAL_MS = 30_000L;
+    private static final float HOME_LOCATION_MOVEMENT_DISTANCE_METERS = 50f;
+    private static final long HOME_LOCATION_RECHECK_DEBOUNCE_MS = 30_000L;
+    // The header must not sit on an indefinite "Finding…" state. A fast, bounded
+    // retry window gives Android's geocoder a fair chance, then shows an honest GPS
+    // fallback that can still be refined from the location picker.
+    private static final long HOME_GEOCODE_RETRY_DELAY_MS = 2_500L;
+    private static final int HOME_GEOCODE_MAX_RETRIES = 2;
+    private long homeGeocodeStartedAtMillis;
+    private boolean homeGeocodeSyncRequested;
+    private int homeGeocodeRetryCount;
+    private Runnable homeGeocodeRetryRunnable;
+    private TextView homeCityLabel;
+    private TextView homeAddressLabel;
+    private long homeAvailabilityCheckedAtMillis;
+    private LocationListener homeAvailabilityLocationListener;
+    private Runnable homeAvailabilityTimeoutRunnable;
+    private boolean bookingAreaUnavailable;
+    private boolean bookingAreaValidationInFlight;
+    private int bookingAreaValidationGeneration;
     private double partnerMapLat;
     private double partnerMapLng;
     private boolean hasPartnerMapLocation;
@@ -459,9 +582,12 @@ public class MainActivity extends Activity {
     private AlertDialog mobileCompletionDialog;
     private boolean amountApprovalPopupQueued;
     private boolean networkSyncRunning;
+    private static final long NETWORK_RESYNC_COOLDOWN_MS = 15_000L;
     private boolean supportQueueSyncing;
     private long lastNetworkSyncAt;
     private int supportReplySequence;
+    private long lastSupportSentAtMillis;
+    private String lastSupportSentBody = "";
     private int userNotificationUnreadCount;
     private String activeSupportTicketId = "";
     private String activeSupportComplaintMessageId = "";
@@ -472,25 +598,67 @@ public class MainActivity extends Activity {
     private String activeBookingChatId = "";
     private String activeBookingChatPeer = "";
     private String bookingHistoryFilter = "all";
+    private int bookingHistoryVisibleLimit = 12;
     private final List<Booking> stableBookingHistory = new ArrayList<>();
     private boolean bookingHistoryRefreshInFlight;
     private boolean customerProfileSyncInFlight;
+    private boolean customerProfileSyncPending;
     private long lastBookingHistoryRefreshAt;
     private Runnable bookingChatPollRunnable;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        applyAdaptiveOrientationPolicy();
         FirebaseCrashlytics crashlytics = FirebaseCrashlytics.getInstance();
         crashlytics.setCustomKey("screen", "splash");
         crashlytics.setCustomKey("app_version", BuildConfig.VERSION_NAME);
         crashlytics.setCustomKey("app_version_code", BuildConfig.VERSION_CODE);
         crashlytics.setCustomKey("android_sdk", Build.VERSION.SDK_INT);
+        recordPreviousProcessExit(crashlytics);
         WindowCompat.setDecorFitsSystemWindows(getWindow(), false);
         applyLightSystemBarIcons();
         getWindow().setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE);
         setContentView(splashScreen());
-        carouselHandler.postDelayed(this::startAfterSplash, SPLASH_DELAY_MS);
+        // Give Android one frame to draw the lightweight splash before any UI construction.
+        carouselHandler.postDelayed(this::startAfterSplash, 80L);
+    }
+
+    private void applyAdaptiveOrientationPolicy() {
+        // Preserve the intended portrait phone experience while allowing
+        // tablets, foldables and desktop/ChromeOS windows to resize and rotate.
+        // Keeping this out of the manifest also avoids Android 16 large-screen
+        // compatibility overrides and their associated relaunch/layout jank.
+        int smallestWidthDp = getResources().getConfiguration().smallestScreenWidthDp;
+        setRequestedOrientation(smallestWidthDp >= 600
+                ? ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+                : ActivityInfo.SCREEN_ORIENTATION_PORTRAIT);
+    }
+
+    private void recordPreviousProcessExit(FirebaseCrashlytics crashlytics) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R || crashlytics == null) return;
+        try {
+            ActivityManager manager = (ActivityManager) getSystemService(ACTIVITY_SERVICE);
+            if (manager == null) return;
+            List<ApplicationExitInfo> exits = manager.getHistoricalProcessExitReasons(getPackageName(), 0, 1);
+            if (exits == null || exits.isEmpty()) return;
+            ApplicationExitInfo exit = exits.get(0);
+            long timestamp = exit.getTimestamp();
+            long alreadyRecorded = getSharedPreferences(PREFS, MODE_PRIVATE)
+                    .getLong("last_recorded_process_exit", 0L);
+            if (timestamp <= 0L || timestamp <= alreadyRecorded) return;
+            getSharedPreferences(PREFS, MODE_PRIVATE).edit()
+                    .putLong("last_recorded_process_exit", timestamp).apply();
+            crashlytics.setCustomKey("previous_exit_reason", exit.getReason());
+            crashlytics.setCustomKey("previous_exit_status", exit.getStatus());
+            crashlytics.setCustomKey("previous_exit_importance", exit.getImportance());
+            crashlytics.setCustomKey("previous_exit_pss_kb", exit.getPss());
+            crashlytics.setCustomKey("previous_exit_rss_kb", exit.getRss());
+            crashlytics.log("Previous Android process exit reason=" + exit.getReason()
+                    + " description=" + String.valueOf(exit.getDescription()));
+        } catch (RuntimeException diagnosticFailure) {
+            Log.w("ApnaServoExit", "Unable to read previous process exit", diagnosticFailure);
+        }
     }
 
     private void startAfterSplash() {
@@ -502,14 +670,11 @@ public class MainActivity extends Activity {
         bookingStore = new BookingStore(this);
         markLegacyBookingMigrationDone();
         firebaseAuth = FirebaseAuth.getInstance();
-        googleSignInClient = buildGoogleSignInClient();
-        firestore = FirebaseFirestore.getInstance("default");
-        realtimeDatabase = FirebaseDatabase.getInstance("https://apna-servo-default-rtdb.firebaseio.com");
-        firebaseStorage = FirebaseStorage.getInstance();
         backendClient = new BackendClient(this);
         backendClient.warmUp();
         appControlRepository = new AppControlRepository(this, backendClient);
         appControl = appControlRepository.cached();
+        applyRemoteTheme(appControl);
         backendSocketClient = new BackendSocketClient(backendClient);
         latestBackendBookingId = secureString(KEY_BACKEND_BOOKING_ID, "");
         loggedIn = getSharedPreferences(PREFS, MODE_PRIVATE).getBoolean("logged_in", false);
@@ -520,7 +685,11 @@ public class MainActivity extends Activity {
         capturePushHintFromIntent(getIntent());
 
         mainScroll = findViewById(R.id.mainScroll);
+        mainScroll.getViewTreeObserver().addOnScrollChangedListener(() -> {
+            if ("home".equals(currentScreen)) lastHomeScrollMillis = SystemClock.elapsedRealtime();
+        });
         screenContent = findViewById(R.id.screenContent);
+        installSmoothContentTransitions();
         bottomNav = findViewById(R.id.bottomNav);
         floatingFooter = findViewById(R.id.floatingFooter);
         supportInputDock = findViewById(R.id.supportInputDock);
@@ -542,7 +711,7 @@ public class MainActivity extends Activity {
         setupBottomNavItems();
 
         navHome.setOnClickListener(view -> showHome());
-        navBookings.setOnClickListener(view -> showBookingsList());
+        navBookings.setOnClickListener(view -> showBookingsWithLoading());
         navOffers.setOnClickListener(view -> showHome());
         navProfile.setOnClickListener(view -> showProfile());
         navAdd.setVisibility(View.GONE);
@@ -568,7 +737,7 @@ public class MainActivity extends Activity {
         if (loggedIn) {
             recoverCustomerIdentityFromFirebase();
             showHome();
-            carouselHandler.postDelayed(this::startLoggedInBackgroundSync, 120);
+            carouselHandler.postDelayed(this::startLoggedInBackgroundSync, 420);
             carouselHandler.postDelayed(this::applyPendingAdminDeepLink, 1200);
         } else {
             showLogin();
@@ -576,6 +745,17 @@ public class MainActivity extends Activity {
         }
         applyAppControlUpdatePrompt();
         refreshAppControl(false);
+        // Data clients are unnecessary for the first screen; initialise them once it is visible.
+        carouselHandler.postDelayed(this::ensureFirebaseDataClients, 500L);
+    }
+
+    private void ensureFirebaseDataClients() {
+        if (activityDestroyed) return;
+        if (firestore == null) firestore = FirebaseFirestore.getInstance("default");
+        if (realtimeDatabase == null) {
+            realtimeDatabase = FirebaseDatabase.getInstance("https://apna-servo-default-rtdb.firebaseio.com");
+        }
+        if (firebaseStorage == null) firebaseStorage = FirebaseStorage.getInstance();
     }
 
     private void configureRootWindowInsets() {
@@ -611,7 +791,7 @@ public class MainActivity extends Activity {
 
     private SecurePrefs securePrefs() {
         if (securePrefs == null) {
-            securePrefs = new SecurePrefs(this, PREFS);
+            securePrefs = new SecurePrefs(this, SECURE_PREFS);
         }
         return securePrefs;
     }
@@ -619,13 +799,16 @@ public class MainActivity extends Activity {
     private String secureString(String key, String fallback) {
         android.content.SharedPreferences legacy = getSharedPreferences(PREFS, MODE_PRIVATE);
         String legacyValue = legacy.getString(key, null);
-        String value = securePrefs().getString(key, legacyValue == null ? fallback : legacyValue);
-        if (legacyValue != null) {
+        String secureValue = securePrefs().getString(key, null);
+        if (secureValue != null) return secureValue;
+        if (legacyValue != null && !legacyValue.startsWith("enc:v1:")) {
             securePrefs().putString(key, legacyValue);
             legacy.edit().remove(key).apply();
             return legacyValue;
         }
-        return value;
+        // A previous build could leave an unreadable encrypted value in the old file. Do not
+        // expose ciphertext in the UI; a new verified location/profile value will replace it.
+        return fallback;
     }
 
     private void putSecureString(String key, String value) {
@@ -639,6 +822,7 @@ public class MainActivity extends Activity {
     }
 
     private void startLoggedInBackgroundSync() {
+        ensureFirebaseDataClients();
         ensureBookingNotificationChannel();
         requestNotificationPermission();
         signInFirebase();
@@ -650,7 +834,9 @@ public class MainActivity extends Activity {
         flushQueuedBookingChatMessages();
         restorePendingBookingSubmission();
         syncCachedBookingsWithBackend();
-        restoreLatestActiveBookingFromStore();
+        // Keep the admin-control socket alive even without an active booking,
+        // so a published status reaches an open customer app immediately.
+        startBackendSocket();
         if (latestBooking != null) {
             startPartnerAssignmentSync();
         }
@@ -698,10 +884,18 @@ public class MainActivity extends Activity {
     }
 
     private void handleNetworkStateChanged(NetworkStateMonitor.State state, NetworkStateMonitor.State previous) {
+        // Defensive UI boundary: never touch views or create Toasts from OkHttp,
+        // Firebase, socket, or connectivity worker threads.
+        if (Looper.myLooper() != Looper.getMainLooper()) {
+            carouselHandler.post(() -> handleNetworkStateChanged(state, previous));
+            return;
+        }
+        if (activityDestroyed || isFinishing()) {
+            return;
+        }
         lastNetworkState = state;
         renderGlobalNetworkBanner();
-        if (state == NetworkStateMonitor.State.ONLINE && previous != NetworkStateMonitor.State.ONLINE) {
-            Toast.makeText(this, "Connection restored", Toast.LENGTH_SHORT).show();
+        if (state == NetworkStateMonitor.State.ONLINE && previous == NetworkStateMonitor.State.OFFLINE) {
             handleInternetAvailable("network-restored");
             return;
         }
@@ -835,7 +1029,7 @@ public class MainActivity extends Activity {
                 dismissNetworkOfflinePage();
                 handleInternetAvailable("manual-retry");
             } else {
-                Toast.makeText(this, "Still offline. Please check your internet connection.", Toast.LENGTH_SHORT).show();
+                SafeToast.makeText(this, "Still offline. Please check your internet connection.", Toast.LENGTH_SHORT).show();
             }
             if (networkOfflineRetryButton != null) {
                 networkOfflineRetryButton.setEnabled(true);
@@ -849,20 +1043,8 @@ public class MainActivity extends Activity {
         if (!loggedIn || !isNetworkOnline()) {
             return;
         }
-        long now = System.currentTimeMillis();
-        if (networkSyncRunning || now - lastNetworkSyncAt < 1800L) {
-            return;
-        }
-        networkSyncRunning = true;
-        lastNetworkSyncAt = now;
-        carouselHandler.postDelayed(() -> networkSyncRunning = false, 1600L);
-
-        refreshFcmToken();
-        syncCustomerProfileToBackend();
-        flushQueuedCustomerSupportMessages();
-        flushQueuedBookingChatMessages();
-        restoreLatestActiveBookingFromStore();
-
+        // Booking submission has its own server-side idempotency key and must recover
+        // promptly. Keep it independent from the heavier profile/history resync.
         if (bookingSubmissionInFlight && pendingBooking != null && pendingBookingService != null) {
             if (pendingBookingRetryRunnable != null) {
                 carouselHandler.removeCallbacks(pendingBookingRetryRunnable);
@@ -871,7 +1053,18 @@ public class MainActivity extends Activity {
             pendingBookingRetryRunnable = this::submitPendingBookingWithRetry;
             carouselHandler.postDelayed(pendingBookingRetryRunnable, 350L);
         }
+        long now = System.currentTimeMillis();
+        if (networkSyncRunning || now - lastNetworkSyncAt < NETWORK_RESYNC_COOLDOWN_MS) {
+            return;
+        }
+        networkSyncRunning = true;
+        lastNetworkSyncAt = now;
+        carouselHandler.postDelayed(() -> networkSyncRunning = false, 5000L);
 
+        refreshFcmToken();
+        syncCustomerProfileToBackend();
+        flushQueuedCustomerSupportMessages();
+        flushQueuedBookingChatMessages();
         syncCachedBookingsWithBackend();
         restoreLatestActiveBookingFromStore();
         if (latestBooking != null && !isBookingClosed(latestBooking)) {
@@ -890,7 +1083,7 @@ public class MainActivity extends Activity {
         }
         syncBookingListStatuses(cached);
         for (Booking booking : cached) {
-            if (booking == null || TextUtils.isEmpty(booking.getId()) || isBookingClosed(booking)) {
+            if (booking == null || isClientBookingRequestId(booking.getId()) || isBookingClosed(booking)) {
                 continue;
             }
             fetchCachedBookingFromBackend(booking.getId());
@@ -906,12 +1099,12 @@ public class MainActivity extends Activity {
                     booking = object;
                 }
                 String code = booking.optString("bookingCode", bookingCode);
-                String partnerName = booking.optString("partnerName", "");
+                String partnerName = booking.optString("serviceContactName", booking.optString("partnerName", ""));
                 if (TextUtils.isEmpty(partnerName)) {
                     JSONObject partner = booking.optJSONObject("partnerSnapshot");
                     partnerName = partner == null ? "" : partner.optString("name", "");
                 }
-                String partnerPhone = booking.optString("partnerPhone", "");
+                String partnerPhone = booking.optString("serviceContactPhone", booking.optString("partnerPhone", ""));
                 if (TextUtils.isEmpty(partnerPhone)) {
                     JSONObject partner = booking.optJSONObject("partnerSnapshot");
                     partnerPhone = partner == null ? "" : partner.optString("phone", "");
@@ -919,6 +1112,7 @@ public class MainActivity extends Activity {
                 if (!TextUtils.isEmpty(partnerPhone)) {
                     bookingPartnerPhoneCache.put(code, partnerPhone);
                 }
+                bookingServiceContactRoleCache.put(code, booking.optString("serviceContactRole", "partner_owner"));
                 rememberPartnerPhoto(code, booking);
                 applyBookingListStatus(code, booking.optString("status", "pending"), partnerName,
                         booking.optInt("finalAmount", booking.optInt("price", 0)));
@@ -956,6 +1150,353 @@ public class MainActivity extends Activity {
                 .setInterpolator(new AccelerateDecelerateInterpolator())
                 .start();
         return root;
+    }
+
+    /** A short, first-Home loading moment using the supplied service-tool artwork language. */
+    private void showHomeLaunchLoadingOnce() {
+        if (homeLaunchLoadingShown || !loggedIn || isFinishing() || isDestroyed()) return;
+        homeLaunchLoadingShown = true;
+        carouselHandler.postDelayed(() -> {
+            if (isFinishing() || isDestroyed() || homeLaunchLoadingOverlay != null) return;
+            FrameLayout overlay = new FrameLayout(this);
+            overlay.setBackgroundColor(Color.WHITE);
+            overlay.setClickable(true); // block accidental Home taps while the opening animation is shown
+            overlay.setAlpha(0f);
+
+            HomeLaunchLoadingArtworkView artwork = new HomeLaunchLoadingArtworkView();
+            artwork.setAlpha(0f);
+            artwork.setScaleX(.92f);
+            artwork.setScaleY(.92f);
+            FrameLayout.LayoutParams artworkParams = new FrameLayout.LayoutParams(dp(276), dp(296), Gravity.CENTER);
+            artworkParams.topMargin = dp(4);
+            overlay.addView(artwork, artworkParams);
+            homeLaunchLoadingOverlay = overlay;
+            addContentView(overlay, new ViewGroup.LayoutParams(-1, -1));
+            overlay.animate().alpha(1f).setDuration(180L)
+                    .setInterpolator(new DecelerateInterpolator()).start();
+            artwork.animate().alpha(1f).scaleX(1f).scaleY(1f).setDuration(560L)
+                    .setInterpolator(new android.view.animation.OvershootInterpolator(.38f)).start();
+            // Keep the branded transition, but never make a ready Home screen wait for it.
+            // A short reveal is enough to mask the first layout frame on slower phones.
+            carouselHandler.postDelayed(this::dismissHomeLaunchLoading, 420L);
+        }, 70L);
+    }
+
+    private void dismissHomeLaunchLoading() {
+        View overlay = homeLaunchLoadingOverlay;
+        if (overlay == null) return;
+        overlay.animate().cancel();
+        View artwork = overlay instanceof ViewGroup && ((ViewGroup) overlay).getChildCount() > 0
+                ? ((ViewGroup) overlay).getChildAt(0) : null;
+        if (artwork != null) {
+            artwork.animate().alpha(0f).scaleX(.96f).scaleY(.96f).setDuration(260L)
+                    .setInterpolator(new AccelerateDecelerateInterpolator()).start();
+        }
+        overlay.animate().alpha(0f).setDuration(300L)
+                .setInterpolator(new AccelerateDecelerateInterpolator())
+                .withEndAction(() -> {
+                    if (homeLaunchLoadingOverlay != overlay) return;
+                    ViewGroup parent = overlay.getParent() instanceof ViewGroup
+                            ? (ViewGroup) overlay.getParent() : null;
+                    if (parent != null) parent.removeView(overlay);
+                    homeLaunchLoadingOverlay = null;
+                }).start();
+    }
+
+    /** Opens cached booking history immediately while remote history syncs in the background. */
+    private void showBookingsWithLoading() {
+        if (bookingsLoadingOverlay != null) return;
+        showBookingsList();
+        if (!"bookings".equals(currentScreen)) return;
+
+        // showBookingsList starts a stale-data refresh; this also guarantees a refresh when
+        // the cache was updated moments ago but the user explicitly requests Bookings again.
+        refreshBookingHistoryFromBackend(true);
+
+        FrameLayout overlay = new FrameLayout(this);
+        overlay.setBackgroundColor(Color.WHITE);
+        overlay.setClickable(true);
+        overlay.setFocusable(true);
+        overlay.setAlpha(0f);
+
+        LinearLayout content = vertical();
+        content.setGravity(Gravity.CENTER_HORIZONTAL);
+
+        HomeLaunchLoadingArtworkView artwork = new HomeLaunchLoadingArtworkView();
+        artwork.setAlpha(0f);
+        artwork.setScaleX(.92f);
+        artwork.setScaleY(.92f);
+        content.addView(artwork, new LinearLayout.LayoutParams(dp(276), dp(296)));
+
+        TextView title = text("Loading your bookings", 22, Color.rgb(24, 24, 27), true);
+        title.setGravity(Gravity.CENTER);
+        content.addView(title, margin(-1, -2, 0, 4, 0, 0));
+
+        TextView subtitle = text("Syncing your latest status and booking history", 13,
+                Color.rgb(105, 101, 101), false);
+        subtitle.setGravity(Gravity.CENTER);
+        content.addView(subtitle, margin(-1, -2, 0, 8, 0, 16));
+
+        ProgressBar progress = new ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal);
+        progress.setIndeterminate(true);
+        progress.setIndeterminateTintList(android.content.res.ColorStateList.valueOf(LOGIN_ROSE));
+        content.addView(progress, margin(112, 4, 0, 0, 0, 0));
+
+        FrameLayout.LayoutParams contentParams = new FrameLayout.LayoutParams(-1, -2, Gravity.CENTER);
+        contentParams.setMargins(dp(24), 0, dp(24), dp(18));
+        overlay.addView(content, contentParams);
+        bookingsLoadingOverlay = overlay;
+        addContentView(overlay, new ViewGroup.LayoutParams(-1, -1));
+
+        overlay.animate().alpha(1f).setDuration(180L)
+                .setInterpolator(new DecelerateInterpolator()).start();
+        artwork.animate().alpha(1f).scaleX(1f).scaleY(1f).setDuration(560L)
+                .setInterpolator(new android.view.animation.OvershootInterpolator(.38f)).start();
+        // Booking refresh re-renders the underlying screen and clears carousel
+        // callbacks. Keep the loader lifecycle on an isolated main-thread handler.
+        bookingsLoadingHandler.removeCallbacksAndMessages(null);
+        // Do not hold navigation behind an artificial three-second delay. The cached list is
+        // already rendered underneath and the backend callback updates it when fresh data lands.
+        bookingsLoadingHandler.postDelayed(this::dismissBookingsLoading, 420L);
+    }
+
+    private void dismissBookingsLoading() {
+        View overlay = bookingsLoadingOverlay;
+        if (overlay == null) return;
+        overlay.animate().alpha(0f).setDuration(300L)
+                .setInterpolator(new AccelerateDecelerateInterpolator())
+                .withEndAction(() -> {
+                    if (bookingsLoadingOverlay != overlay) return;
+                    ViewGroup parent = overlay.getParent() instanceof ViewGroup
+                            ? (ViewGroup) overlay.getParent() : null;
+                    if (parent != null) parent.removeView(overlay);
+                    bookingsLoadingOverlay = null;
+                }).start();
+    }
+
+    /**
+     * Native Canvas version of the attached animated SVG: floating toolkit, red service bottle,
+     * small trust-plus badge and an animated ground shadow. Keeping it native avoids a WebView
+     * on the critical Home path and remains crisp at every Android density.
+     */
+    private final class HomeLaunchLoadingArtworkView extends View {
+        private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private final Path path = new Path();
+        private ValueAnimator animator;
+        private float phase;
+
+        HomeLaunchLoadingArtworkView() {
+            super(MainActivity.this);
+            setLayerType(View.LAYER_TYPE_SOFTWARE, null);
+        }
+
+        @Override protected void onAttachedToWindow() {
+            super.onAttachedToWindow();
+            animator = ValueAnimator.ofFloat(0f, 1f);
+            animator.setDuration(2_800L);
+            animator.setRepeatCount(ValueAnimator.INFINITE);
+            // The drawing uses sine waves below, so a linear phase avoids a visible pause or
+            // jump when the animation loop starts over.
+            animator.setInterpolator(new LinearInterpolator());
+            animator.addUpdateListener(value -> {
+                phase = (float) value.getAnimatedValue();
+                invalidate();
+            });
+            animator.start();
+        }
+
+        @Override protected void onDetachedFromWindow() {
+            if (animator != null) {
+                animator.cancel();
+                animator.removeAllUpdateListeners();
+                animator = null;
+            }
+            super.onDetachedFromWindow();
+        }
+
+        @Override protected void onDraw(Canvas canvas) {
+            super.onDraw(canvas);
+            float scale = Math.min(getWidth() / 400f, getHeight() / 420f) * .88f;
+            float dx = (getWidth() - 400f * scale) * .5f;
+            float dy = (getHeight() - 420f * scale) * .5f;
+            float progress = (float) ((Math.sin(phase * Math.PI * 2d - Math.PI / 2d) + 1d) * .5d);
+            float sideDrift = (float) Math.sin(phase * Math.PI * 2d) * 2.2f;
+            float glowPulse = .72f + (.28f * progress);
+
+            canvas.save();
+            canvas.translate(dx, dy);
+            canvas.scale(scale, scale);
+
+            // Three soft layers give the white canvas a premium, believable contact shadow.
+            canvas.save();
+            canvas.translate(200f, 345f);
+            float shadowScale = 1f - (.32f * progress);
+            canvas.scale(shadowScale, 1f - (.12f * progress));
+            paint.setStyle(Paint.Style.FILL);
+            paint.setShader(new RadialGradient(0, 0, 98f,
+                    new int[]{Color.argb((int) (68f * glowPulse), 122, 19, 31), Color.argb(18, 122, 19, 31), Color.TRANSPARENT},
+                    new float[]{0f, .52f, 1f}, Shader.TileMode.CLAMP));
+            canvas.drawOval(new RectF(-98f, -17f, 98f, 17f), paint);
+            paint.setShader(null);
+            paint.setColor(Color.argb((int) (35f * (1f - progress)), 115, 12, 28));
+            canvas.drawOval(new RectF(-67f, -11f, 67f, 11f), paint);
+            paint.setColor(Color.argb((int) (56f * (1f - progress)), 74, 5, 14));
+            paint.setShadowLayer(9f, 0f, 3f, Color.argb(43, 74, 5, 14));
+            canvas.drawOval(new RectF(-48f, -8f, 48f, 8f), paint);
+            paint.clearShadowLayer();
+            canvas.restore();
+
+            canvas.save();
+            canvas.translate(sideDrift, -26f * progress);
+            canvas.rotate(-1.5f * progress + (sideDrift * .15f), 200f, 220f);
+            // An almost imperceptible rosy halo provides depth without tinting the clean
+            // white launch screen.
+            paint.setStyle(Paint.Style.FILL);
+            paint.setShader(new RadialGradient(200f, 235f, 130f,
+                    new int[]{Color.argb((int) (12f + 8f * progress), 255, 122, 140), Color.TRANSPARENT},
+                    new float[]{0f, 1f}, Shader.TileMode.CLAMP));
+            canvas.drawCircle(200f, 235f, 130f, paint);
+            paint.setShader(null);
+            drawLoadingSpark(canvas, 120f, 145f, 10f * (.72f + .48f * progress), Color.rgb(226, 27, 54));
+            drawLoadingSpark(canvas, 295f, 165f, 9f * (1.05f - .32f * progress), Color.rgb(226, 27, 54));
+
+            // Floating trust-plus badge.
+            float badgeRise = -8f * progress;
+            paint.setStyle(Paint.Style.FILL);
+            paint.setColor(Color.rgb(255, 241, 243));
+            paint.setShadowLayer(10f, 0f, 4f, Color.argb(34, 226, 27, 54));
+            canvas.drawCircle(275f, 125f + badgeRise, 16f, paint);
+            paint.clearShadowLayer();
+            paint.setStyle(Paint.Style.STROKE);
+            paint.setStrokeWidth(1.5f);
+            paint.setColor(Color.rgb(252, 211, 217));
+            canvas.drawCircle(275f, 125f + badgeRise, 16f, paint);
+            paint.setColor(Color.rgb(226, 27, 54));
+            paint.setStrokeWidth(3f);
+            paint.setStrokeCap(Paint.Cap.ROUND);
+            canvas.drawLine(269f, 125f + badgeRise, 281f, 125f + badgeRise, paint);
+            canvas.drawLine(275f, 119f + badgeRise, 275f, 131f + badgeRise, paint);
+            paint.setStrokeCap(Paint.Cap.BUTT);
+
+            drawLoadingBottle(canvas, progress);
+            drawLoadingScrewdriver(canvas);
+            drawLoadingWrench(canvas, progress);
+            drawLoadingToolbox(canvas);
+            canvas.restore();
+            canvas.restore();
+        }
+
+        private void drawLoadingBottle(Canvas canvas, float progress) {
+            canvas.save();
+            canvas.rotate(10f + 5f * progress, 247f, 240f);
+            paint.setStyle(Paint.Style.FILL);
+            paint.setColor(Color.WHITE);
+            paint.setShadowLayer(14f, 0f, 8f, Color.argb(42, 180, 20, 40));
+            canvas.drawRoundRect(new RectF(238f, 152f, 254f, 174f), 4f, 4f, paint);
+            paint.clearShadowLayer();
+            paint.setColor(Color.rgb(226, 27, 54));
+            path.reset();
+            path.moveTo(236f, 156f); path.lineTo(220f, 162f); path.lineTo(220f, 168f); path.lineTo(238f, 168f); path.close();
+            canvas.drawPath(path, paint);
+            canvas.drawRoundRect(new RectF(237f, 174f, 255f, 187f), 3f, 3f, paint);
+            paint.setShader(new LinearGradient(222f, 190f, 270f, 284f,
+                    Color.rgb(255, 90, 114), Color.rgb(208, 18, 43), Shader.TileMode.CLAMP));
+            path.reset();
+            path.moveTo(228f, 190f); path.cubicTo(228f, 184f, 264f, 184f, 264f, 190f);
+            path.lineTo(270f, 270f); path.cubicTo(270f, 279f, 262f, 284f, 252f, 284f);
+            path.lineTo(240f, 284f); path.cubicTo(230f, 284f, 222f, 278f, 222f, 270f); path.close();
+            canvas.drawPath(path, paint);
+            paint.setShader(null);
+            paint.setColor(Color.argb(238, 255, 255, 255));
+            canvas.drawRoundRect(new RectF(227f, 215f, 265f, 257f), 4f, 4f, paint);
+            drawLoadingSpark(canvas, 246f, 236f, 8f, Color.rgb(226, 27, 54));
+            paint.setColor(Color.argb(110, 255, 255, 255));
+            paint.setStrokeWidth(3f);
+            paint.setStyle(Paint.Style.STROKE);
+            paint.setStrokeCap(Paint.Cap.ROUND);
+            canvas.drawLine(232f, 197f, 230f, 266f, paint);
+            paint.setStrokeCap(Paint.Cap.BUTT);
+            canvas.restore();
+        }
+
+        private void drawLoadingScrewdriver(Canvas canvas) {
+            canvas.save();
+            canvas.translate(143f, 178f);
+            canvas.rotate(-35f);
+            paint.setStyle(Paint.Style.FILL);
+            paint.setColor(Color.rgb(229, 231, 235));
+            canvas.drawRoundRect(new RectF(0f, 0f, 5f, 42f), 1f, 1f, paint);
+            paint.setColor(Color.rgb(156, 163, 175));
+            path.reset(); path.moveTo(0f, 0f); path.lineTo(5f, 0f); path.lineTo(3.5f, -7f); path.lineTo(1.5f, -7f); path.close();
+            canvas.drawPath(path, paint);
+            paint.setColor(Color.rgb(31, 41, 55));
+            path.reset(); path.moveTo(-4f, 42f); path.cubicTo(-4f, 39f, 9f, 39f, 9f, 42f);
+            path.lineTo(8f, 75f); path.cubicTo(8f, 80f, -3f, 80f, -3f, 75f); path.close();
+            canvas.drawPath(path, paint);
+            paint.setColor(Color.rgb(226, 27, 54));
+            for (int y = 48; y <= 68; y += 10) canvas.drawRoundRect(new RectF(-2f, y, 8f, y + 4f), 1f, 1f, paint);
+            canvas.restore();
+        }
+
+        private void drawLoadingWrench(Canvas canvas, float progress) {
+            canvas.save();
+            canvas.rotate(-22f + 7f * progress, 170f, 210f);
+            paint.setStyle(Paint.Style.FILL);
+            paint.setShader(new LinearGradient(136f, 145f, 232f, 255f,
+                    Color.rgb(226, 27, 54), Color.rgb(156, 10, 31), Shader.TileMode.CLAMP));
+            paint.setShadowLayer(16f, 0f, 9f, Color.argb(75, 150, 10, 30));
+            path.reset();
+            path.moveTo(152f, 245f); path.lineTo(198f, 172f);
+            path.cubicTo(195f, 163f, 197f, 154f, 204f, 148f);
+            path.cubicTo(210f, 143f, 219f, 141f, 226f, 144f);
+            path.lineTo(216f, 154f); path.lineTo(222f, 160f); path.lineTo(232f, 150f);
+            path.cubicTo(235f, 158f, 233f, 167f, 227f, 173f);
+            path.cubicTo(221f, 179f, 212f, 181f, 204f, 178f);
+            path.lineTo(158f, 251f); path.cubicTo(152f, 260f, 134f, 255f, 132f, 244f);
+            path.cubicTo(131f, 237f, 136f, 230f, 143f, 228f); path.close();
+            canvas.drawPath(path, paint);
+            paint.clearShadowLayer(); paint.setShader(null);
+            paint.setStyle(Paint.Style.STROKE); paint.setStrokeWidth(2.5f); paint.setStrokeCap(Paint.Cap.ROUND);
+            paint.setColor(Color.argb(180, 255, 255, 255));
+            canvas.drawLine(155f, 242f, 196f, 177f, paint);
+            paint.setStyle(Paint.Style.FILL); canvas.drawCircle(218f, 162f, 3f, paint);
+            paint.setStrokeCap(Paint.Cap.BUTT);
+            canvas.restore();
+        }
+
+        private void drawLoadingToolbox(Canvas canvas) {
+            paint.setStyle(Paint.Style.FILL);
+            paint.setColor(Color.argb(36, 156, 10, 31));
+            canvas.drawRoundRect(new RectF(125f, 228f, 275f, 304f), 18f, 18f, paint);
+            paint.setShader(new LinearGradient(120f, 240f, 280f, 316f,
+                    Color.WHITE, Color.rgb(255, 240, 242), Shader.TileMode.CLAMP));
+            paint.setShadowLayer(25f, 0f, 14f, Color.argb(46, 160, 20, 40));
+            path.reset();
+            path.moveTo(120f, 252f); path.cubicTo(120f, 242f, 135f, 240f, 150f, 240f);
+            path.lineTo(250f, 240f); path.cubicTo(265f, 240f, 280f, 242f, 280f, 252f);
+            path.lineTo(272f, 296f); path.cubicTo(270f, 310f, 255f, 316f, 235f, 316f);
+            path.lineTo(165f, 316f); path.cubicTo(145f, 316f, 130f, 310f, 128f, 296f); path.close();
+            canvas.drawPath(path, paint);
+            paint.clearShadowLayer(); paint.setShader(null);
+            paint.setStyle(Paint.Style.STROKE); paint.setStrokeWidth(2f); paint.setColor(Color.rgb(250, 209, 214));
+            canvas.drawPath(path, paint);
+            paint.setStrokeWidth(4f); paint.setStrokeCap(Paint.Cap.ROUND); paint.setColor(Color.rgb(226, 27, 54));
+            canvas.drawLine(139f, 248f, 261f, 248f, paint);
+            paint.setStyle(Paint.Style.FILL); paint.setColor(Color.rgb(255, 241, 243));
+            canvas.drawRoundRect(new RectF(172f, 268f, 228f, 292f), 12f, 12f, paint);
+            drawLoadingSpark(canvas, 191f, 280f, 7f, Color.rgb(226, 27, 54));
+            paint.setColor(Color.rgb(226, 27, 54)); canvas.drawCircle(204f, 280f, 2.5f, paint); paint.setAlpha(130);
+            canvas.drawCircle(212f, 280f, 2.5f, paint); paint.setAlpha(255); paint.setStrokeCap(Paint.Cap.BUTT);
+        }
+
+        private void drawLoadingSpark(Canvas canvas, float cx, float cy, float radius, int color) {
+            paint.setShader(null); paint.setStyle(Paint.Style.FILL); paint.setColor(color);
+            path.reset();
+            path.moveTo(cx, cy - radius); path.quadTo(cx, cy, cx + radius, cy);
+            path.quadTo(cx, cy, cx, cy + radius); path.quadTo(cx, cy, cx - radius, cy);
+            path.quadTo(cx, cy, cx, cy - radius); path.close();
+            canvas.drawPath(path, paint);
+        }
     }
 
     private void markLegacyBookingMigrationDone() {
@@ -1006,12 +1547,21 @@ public class MainActivity extends Activity {
 
     @Override
     protected void onPause() {
+        activityForeground = false;
+        // The short high-accuracy request is only useful while this Home screen is visible.
+        // Cancelling it here avoids any background GPS work.
+        clearHomeAvailabilityLocationRequest();
+        clearHomeLocationMovementMonitor();
         super.onPause();
     }
 
     @Override
     protected void onStop() {
+        if (cancelBookingGpsRequest != null) cancelBookingGpsRequest.run();
         pausePartnerAssignmentSync();
+        if (backendSocketClient != null) {
+            backendSocketClient.disconnect();
+        }
         super.onStop();
     }
 
@@ -1019,6 +1569,7 @@ public class MainActivity extends Activity {
     protected void onDestroy() {
         activityDestroyed = true;
         if (appUpdateDialog != null) appUpdateDialog.dismiss();
+        if (appControlRepository != null) appControlRepository.dispose();
         stopBannerCarousel();
         stopHomeTrustRibbon();
         if (partnerAssignmentRunnable != null) {
@@ -1046,18 +1597,41 @@ public class MainActivity extends Activity {
         unregisterNetworkSync();
         stopCustomerOtpRetriever();
         geocoderExecutor.shutdownNow();
+        artworkExecutor.shutdownNow();
+        bookingPersistenceExecutor.shutdown();
         compactIconCache.evictAll();
         // Nothing posted by this Activity may touch its views after teardown.
         carouselHandler.removeCallbacksAndMessages(null);
+        clearHomeAvailabilityLocationRequest();
+        clearHomeLocationMovementMonitor();
+        if (homeLocationRequiredDialog != null) homeLocationRequiredDialog.dismiss();
         super.onDestroy();
     }
 
     @Override
     protected void onResume() {
         super.onResume();
+        activityForeground = true;
+        if (headerLocationWaitingForSettings) {
+            headerLocationWaitingForSettings = false;
+            LocationManager manager = (LocationManager) getSystemService(LOCATION_SERVICE);
+            if (hasStartupLocationPermission() && manager != null && isDeviceLocationEnabled(manager)) {
+                headerPrefersDetectedLocation = true;
+                clearHomeAvailabilityLocationRequest();
+                checkHomeServiceAvailability(true);
+            }
+        }
+        if (homeWeatherOverlay != null) homeWeatherOverlay.invalidate();
+        if ("home".equals(currentScreen)) requestHomeHeaderWeather();
+        if (loggedIn && "home".equals(currentScreen)) {
+            carouselHandler.postDelayed(this::ensureHomeLocationReady, 350L);
+        }
+        applyAppControlUpdatePrompt();
+        if (appControl != null && appControl.blocksBooking()) showGlobalAppStatus();
         // A foreground transition is the admin's immediate control boundary. This bypasses
         // the normal cache throttle while remaining asynchronous and coalesced in the repository.
         refreshAppControl(true);
+        if (loggedIn) startBackendSocket();
         restoreLatestActiveBookingFromStore();
         if (startupLocationGateActive && startupLocationWaitingForSettings) {
             startupLocationWaitingForSettings = false;
@@ -1069,7 +1643,6 @@ public class MainActivity extends Activity {
         }
         applyPendingPushBookingHint();
         applyPendingAdminDeepLink();
-        handleInternetAvailable("resume");
         if (latestBooking != null && !isBookingClosed(latestBooking)) {
             startPartnerAssignmentSync();
         }
@@ -1087,13 +1660,19 @@ public class MainActivity extends Activity {
     @Override
     public void onLowMemory() {
         super.onLowMemory();
+        memoryPressureMode = true;
         compactIconCache.evictAll();
+        Glide.get(this).clearMemory();
     }
 
     @Override
     public void onTrimMemory(int level) {
         super.onTrimMemory(level);
-        if (level >= TRIM_MEMORY_RUNNING_LOW) compactIconCache.evictAll();
+        if (level >= TRIM_MEMORY_RUNNING_LOW) {
+            memoryPressureMode = true;
+            compactIconCache.evictAll();
+            Glide.get(this).clearMemory();
+        }
     }
 
     private void executeGeocoderTask(Runnable task) {
@@ -1104,6 +1683,55 @@ public class MainActivity extends Activity {
     private boolean isLowRamDevice() {
         ActivityManager manager = (ActivityManager) getSystemService(ACTIVITY_SERVICE);
         return manager != null && manager.isLowRamDevice();
+    }
+
+    private boolean isConstrainedDevice() {
+        if (memoryPressureMode) return true;
+        if (constrainedDeviceCache != null) return constrainedDeviceCache;
+        ActivityManager manager = (ActivityManager) getSystemService(ACTIVITY_SERVICE);
+        constrainedDeviceCache = manager != null
+                && (manager.isLowRamDevice() || manager.getMemoryClass() <= 192);
+        return constrainedDeviceCache;
+    }
+
+    /**
+     * Keeps remotely-controlled banners and expanding header content from snapping the page.
+     * Bounds animation is deliberately short and is disabled on constrained phones so motion
+     * never costs responsiveness.
+     */
+    private void installSmoothContentTransitions() {
+        if (screenContent == null) return;
+        LayoutTransition transition = new LayoutTransition();
+        transition.setAnimateParentHierarchy(false);
+        transition.setDuration(LayoutTransition.APPEARING, isConstrainedDevice() ? 0L : 170L);
+        transition.setDuration(LayoutTransition.DISAPPEARING, isConstrainedDevice() ? 0L : 130L);
+        transition.setDuration(LayoutTransition.CHANGE_APPEARING, isConstrainedDevice() ? 0L : 220L);
+        transition.setDuration(LayoutTransition.CHANGE_DISAPPEARING, isConstrainedDevice() ? 0L : 190L);
+        transition.setStartDelay(LayoutTransition.APPEARING, 0L);
+        transition.setStartDelay(LayoutTransition.DISAPPEARING, 0L);
+        transition.setStagger(LayoutTransition.APPEARING, 18L);
+        if (!isConstrainedDevice()) {
+            transition.enableTransitionType(LayoutTransition.CHANGING);
+            transition.setDuration(LayoutTransition.CHANGING, 220L);
+        }
+        screenContent.setLayoutTransition(transition);
+    }
+
+    /** A single GPU-only screen entrance shared by login, Home, bookings, profile and flows. */
+    private void animateScreenContentIn() {
+        if (screenContent == null || isConstrainedDevice()) return;
+        screenContent.animate().cancel();
+        screenContent.setAlpha(0.94f);
+        screenContent.setTranslationY(dp(7));
+        screenContent.post(() -> {
+            if (activityDestroyed || screenContent == null) return;
+            screenContent.animate()
+                    .alpha(1f)
+                    .translationY(0f)
+                    .setDuration(210L)
+                    .setInterpolator(new DecelerateInterpolator())
+                    .start();
+        });
     }
 
     private void registerBackHandler() {
@@ -1122,6 +1750,9 @@ public class MainActivity extends Activity {
         );
         if (TextUtils.equals(currentScreen, screen)) {
             return;
+        }
+        if ("home".equals(currentScreen) && !"home".equals(screen)) {
+            clearHomeLocationMovementMonitor();
         }
         if ("bookings".equals(currentScreen) && !"bookings".equals(screen)) {
             clearBookingListStatusListeners();
@@ -1286,7 +1917,7 @@ public class MainActivity extends Activity {
             if (granted) {
                 launchSupportCamera();
             } else {
-                Toast.makeText(this, "Camera permission required for support photo.", Toast.LENGTH_SHORT).show();
+                SafeToast.makeText(this, "Camera permission required for support photo.", Toast.LENGTH_SHORT).show();
             }
             return;
         }
@@ -1300,12 +1931,25 @@ public class MainActivity extends Activity {
                 break;
             }
         }
+        if (headerLocationPermissionPending) {
+            headerLocationPermissionPending = false;
+            if (granted) requestHeaderLocation();
+            else SafeToast.makeText(this, "Location permission is needed. Tap the location arrow to try again.", Toast.LENGTH_LONG).show();
+            return;
+        }
         if (startupLocationGateActive) {
             if (granted) {
                 startStartupLocationDetection();
             } else {
                 showStartupLocationPermissionState("Location permission was denied. Allow it to auto-detect, or continue with Guwahati as default.");
             }
+            return;
+        }
+        if (homeAvailabilityPermissionRequested && "home".equals(currentScreen)) {
+            homeAvailabilityPermissionRequested = false;
+            homeAvailabilityCheckStarted = false;
+            if (granted) checkHomeServiceAvailability(true);
+            else homeServiceAreaState = ServiceAreaPolicy.State.UNKNOWN;
             return;
         }
         if (granted) {
@@ -1456,6 +2100,10 @@ public class MainActivity extends Activity {
             manager.requestSingleUpdate(provider, new LocationListener() {
                 @Override
                 public void onLocationChanged(Location location) {
+                    if (!LocationQuality.usable(location)) {
+                        showStartupLocationRetryState("Precise location unavailable. Enable precise location, retry outdoors, or choose your address manually.");
+                        return;
+                    }
                     if (startupLocationTimeoutRunnable != null) {
                         carouselHandler.removeCallbacks(startupLocationTimeoutRunnable);
                         startupLocationTimeoutRunnable = null;
@@ -1474,6 +2122,11 @@ public class MainActivity extends Activity {
         return Build.VERSION.SDK_INT < Build.VERSION_CODES.M
                 || checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED
                 || checkSelfPermission(Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED;
+    }
+
+    private boolean hasPreciseLocationPermission() {
+        return Build.VERSION.SDK_INT < Build.VERSION_CODES.M
+                || checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED;
     }
 
     private boolean isDeviceLocationEnabled(LocationManager manager) {
@@ -1551,7 +2204,7 @@ public class MainActivity extends Activity {
             try {
                 startActivity(new Intent(Settings.ACTION_LOCATION_SOURCE_SETTINGS));
             } catch (Exception exception) {
-                Toast.makeText(this, "Location settings unavailable", Toast.LENGTH_SHORT).show();
+                SafeToast.makeText(this, "Location settings unavailable", Toast.LENGTH_SHORT).show();
             }
         });
         addStartupLocationAction("Continue", MUTED, Color.WHITE, view -> finishStartupLocationGate(false));
@@ -1565,13 +2218,19 @@ public class MainActivity extends Activity {
     }
 
     private void completeStartupLocationDetected(Location location) {
-        if (!startupLocationGateActive || location == null) {
+        if (!startupLocationGateActive || !LocationQuality.usable(location)) {
             return;
         }
         serviceLat = location.getLatitude();
         serviceLng = location.getLongitude();
         hasServiceLocation = true;
-        updateStartupLocationState("Location detected", "Nearby ApnaServo services are ready.", GREEN);
+        rememberDetectedHomeLocation(location);
+        homeServiceAreaState = ServiceAreaPolicy.evaluate(serviceLat, serviceLng);
+        String status = homeServiceAreaState == ServiceAreaPolicy.State.UNAVAILABLE
+                ? "ApnaServo is coming soon to your area."
+                : "Nearby ApnaServo services are ready.";
+        updateStartupLocationState("Location detected", status,
+                homeServiceAreaState == ServiceAreaPolicy.State.UNAVAILABLE ? ORANGE : GREEN);
         clearStartupLocationActions();
         carouselHandler.postDelayed(() -> finishStartupLocationGate(true), 650);
     }
@@ -1592,7 +2251,7 @@ public class MainActivity extends Activity {
             currentScreen = "login";
             screenContent.setMinimumHeight(0);
             showHome();
-            carouselHandler.postDelayed(this::startLoggedInBackgroundSync, 120);
+            carouselHandler.postDelayed(this::startLoggedInBackgroundSync, 420);
             carouselHandler.postDelayed(this::requestNotificationPermission, detected ? 650 : 900);
         };
         if (gate == null) {
@@ -1657,14 +2316,16 @@ public class MainActivity extends Activity {
             if (activityDestroyed || isFinishing() || isDestroyed()) return;
             AppControlConfig previous = appControl;
             appControl = config == null ? AppControlConfig.DEFAULT : config;
-            applyAppControlUpdatePrompt();
+            applyRemoteTheme(appControl);
+            if (activityForeground) applyAppControlUpdatePrompt();
             if (navBookings != null) {
                 navBookings.setVisibility(featureEnabled(FeatureRegistry.BOOKING_HISTORY) ? View.VISIBLE : View.GONE);
             }
-            // A published maintenance state blocks a booking attempt, not the
-            // whole home screen. This keeps the status modal in context.
-            if (appControl.mode == AppControlConfig.AppMode.LIVE && appStatusDialog != null
-                    && appStatusDialog.isShowing()) {
+            // High demand and maintenance keep the home visible, but always
+            // explain the published global state when the app receives it.
+            if (activityForeground && appControl.blocksBooking()) {
+                showGlobalAppStatus();
+            } else if (appStatusDialog != null && appStatusDialog.isShowing()) {
                 appStatusDialog.dismiss();
             }
             if ("home".equals(currentScreen)
@@ -1675,31 +2336,46 @@ public class MainActivity extends Activity {
         });
     }
 
+    private void applyRemoteTheme(AppControlConfig config) {
+        try {
+            int primary = Color.parseColor(config == null ? "#f32368" : config.themePrimaryColor);
+            BOOKING_THEME = primary;
+            BOOKING_THEME_DARK = Color.rgb(Math.round(Color.red(primary) * 0.52f), Math.round(Color.green(primary) * 0.52f), Math.round(Color.blue(primary) * 0.52f));
+            BOOKING_THEME_SOFT = Color.rgb(255 - Math.round((255 - Color.red(primary)) * 0.14f), 255 - Math.round((255 - Color.green(primary)) * 0.14f), 255 - Math.round((255 - Color.blue(primary)) * 0.14f));
+        } catch (Exception ignored) {
+            BOOKING_THEME = Color.rgb(255, 63, 95);
+            BOOKING_THEME_DARK = Color.rgb(126, 0, 18);
+            BOOKING_THEME_SOFT = Color.rgb(255, 238, 242);
+        }
+    }
+
     private void showGlobalAppStatus() {
-        if (isFinishing() || isDestroyed()) return;
-        if (appStatusDialog != null && appStatusDialog.isShowing()) return;
+        if (!activityForeground || isFinishing() || isDestroyed()) return;
+        if (appStatusDialog != null && appStatusDialog.isShowing()) {
+            if (appStatusDialogMode == appControl.mode) return;
+            appStatusDialog.dismiss();
+        }
 
         final boolean maintenance = appControl.mode == AppControlConfig.AppMode.MAINTENANCE;
-        final boolean areaUnavailable = appControl.mode == AppControlConfig.AppMode.PARTIALLY_UNAVAILABLE;
         final int illustration = maintenance ? R.drawable.app_status_maintenance
-                : areaUnavailable ? R.drawable.app_status_area_unavailable
                 : R.drawable.app_status_high_demand;
         final String title = maintenance ? "ApnaServo is Under Maintenance"
-                : areaUnavailable ? "We're Not Available in Your Area"
                 : "App is facing high demand";
         final String message = maintenance
                 ? "We are currently performing some maintenance to improve your experience."
-                : areaUnavailable
-                ? "Sorry, ApnaServo services are not currently available in your area."
                 : "We are currently receiving a high number of service requests.";
-        final String secondary = maintenance || !areaUnavailable
-                ? "Please try again after some time."
-                : "We're working to expand our services and reach you soon.";
+        final String secondary = "Please try again after some time.";
 
         AlertDialog dialog = new AlertDialog.Builder(this).create();
         appStatusDialog = dialog;
+        appStatusDialogMode = appControl.mode;
         dialog.setCanceledOnTouchOutside(true);
-        dialog.setOnDismissListener(ignored -> appStatusDialog = null);
+        dialog.setOnDismissListener(ignored -> {
+            if (appStatusDialog == dialog) {
+                appStatusDialog = null;
+                appStatusDialogMode = null;
+            }
+        });
         LinearLayout card = vertical();
         card.setGravity(Gravity.CENTER_HORIZONTAL);
         card.setPadding(dp(28), dp(24), dp(28), dp(28));
@@ -1720,41 +2396,12 @@ public class MainActivity extends Activity {
         TextView body = text(message + "\n\n" + secondary, 16, Color.rgb(74, 80, 96), false);
         body.setGravity(Gravity.CENTER);
         body.setLineSpacing(dp(4), 1f);
-        card.addView(body, margin(-1, -2, 0, 0, 0, areaUnavailable ? 18 : 24));
+        card.addView(body, margin(-1, -2, 0, 0, 0, 24));
 
-        if (areaUnavailable) {
-            LinearLayout info = horizontal();
-            info.setGravity(Gravity.CENTER_VERTICAL);
-            info.setPadding(dp(16), dp(12), dp(16), dp(12));
-            info.setBackground(round(Color.rgb(255, 239, 243), dp(14)));
-            TextView pin = text("⌖", 30, BOOKING_THEME, true);
-            pin.setGravity(Gravity.CENTER);
-            info.addView(pin, new LinearLayout.LayoutParams(dp(45), dp(50)));
-            LinearLayout copy = vertical();
-            copy.addView(text("Service unavailable in your location", 15, Color.rgb(41, 48, 67), true));
-            copy.addView(text("We'll be coming to more areas soon.", 13, Color.rgb(82, 88, 105), false), margin(-1, -2, 0, 4, 0, 0));
-            info.addView(copy, new LinearLayout.LayoutParams(0, -2, 1));
-            card.addView(info, margin(-1, -2, 0, 0, 0, 22));
-        }
-
-        TextView action = orangeButton(maintenance || areaUnavailable ? "Okay, Got It" : "Okay");
+        TextView action = orangeButton(maintenance ? "Okay, Got It" : "Okay");
         action.setOnClickListener(view -> dialog.dismiss());
         card.addView(action, new LinearLayout.LayoutParams(-1, dp(58)));
-        if (areaUnavailable) {
-            FrameLayout modal = new FrameLayout(this);
-            modal.addView(card, new FrameLayout.LayoutParams(-1, -2));
-            TextView close = text("×", 31, BOOKING_THEME, false);
-            close.setGravity(Gravity.CENTER);
-            close.setBackground(round(Color.rgb(255, 239, 243), dp(22)));
-            close.setOnClickListener(view -> dialog.dismiss());
-            FrameLayout.LayoutParams closeParams = new FrameLayout.LayoutParams(dp(44), dp(44), Gravity.TOP | Gravity.END);
-            closeParams.topMargin = dp(14);
-            closeParams.rightMargin = dp(14);
-            modal.addView(close, closeParams);
-            dialog.setView(modal);
-        } else {
-            dialog.setView(card);
-        }
+        dialog.setView(card);
         dialog.setOnShowListener(ignored -> {
             Window window = dialog.getWindow();
             if (window == null) return;
@@ -1767,7 +2414,7 @@ public class MainActivity extends Activity {
     }
 
     private void applyAppControlUpdatePrompt() {
-        if (screenContent == null || appControl == null) return;
+        if (!activityForeground || screenContent == null || appControl == null) return;
         if (!appControl.update.enabled) {
             dismissAppUpdateDialog();
             return;
@@ -1775,9 +2422,11 @@ public class MainActivity extends Activity {
         AppControlConfig.Update update = appControl.update;
         boolean belowMinimum = !TextUtils.isEmpty(update.minimumVersion)
                 && AppControlConfig.compareVersions(BuildConfig.VERSION_NAME, update.minimumVersion) < 0;
+        belowMinimum = belowMinimum || (update.minimumBuild > 0 && BuildConfig.VERSION_CODE < update.minimumBuild);
         boolean belowLatest = !TextUtils.isEmpty(update.latestVersion)
                 && AppControlConfig.compareVersions(BuildConfig.VERSION_NAME, update.latestVersion) < 0;
-        boolean force = belowMinimum || (update.force && belowLatest);
+        belowLatest = belowLatest || (update.latestBuild > 0 && BuildConfig.VERSION_CODE < update.latestBuild);
+        boolean force = belowMinimum;
         if (!force && !belowLatest) {
             dismissAppUpdateDialog();
             return;
@@ -1870,7 +2519,7 @@ public class MainActivity extends Activity {
             }
             return true;
         } catch (Exception error) {
-            Toast.makeText(this, "Unable to open the update link.", Toast.LENGTH_LONG).show();
+            SafeToast.makeText(this, "Unable to open the update link.", Toast.LENGTH_LONG).show();
             return false;
         }
     }
@@ -1955,7 +2604,7 @@ public class MainActivity extends Activity {
     private void loadBoundedAdminImage(ImageView target, String rawUrl) {
         if (activityDestroyed || target == null || !isSafeRemoteImageUrl(rawUrl)) return;
         RequestOptions options = new RequestOptions()
-                .override(isLowRamDevice() ? 640 : 1200, isLowRamDevice() ? 640 : 1200)
+                .override(isConstrainedDevice() ? 480 : 960, isConstrainedDevice() ? 480 : 960)
                 .format(DecodeFormat.PREFER_RGB_565)
                 .diskCacheStrategy(DiskCacheStrategy.AUTOMATIC)
                 .dontAnimate();
@@ -1976,6 +2625,60 @@ public class MainActivity extends Activity {
                     }
                 })
                 .into(target);
+    }
+
+    // App Control media is always optional. The signed drawable is applied
+    // first, then Glide swaps in the published HTTPS asset only if it loads.
+    // This avoids blank cards on weak networks, stale CDN responses, or an
+    // interrupted upload, while Glide's disk cache keeps normal opens fast.
+    private void loadPublishedServiceImage(ImageView target, Service service, int fallbackResource) {
+        loadPublishedServiceImage(target, service, fallbackResource, 720, 405);
+    }
+
+    private void loadPublishedServiceThumbnail(ImageView target, Service service, int fallbackResource) {
+        loadPublishedServiceImage(target, service, fallbackResource, 300, 200);
+    }
+
+    private void loadBoundedDrawableResource(ImageView target, int resource, int width, int height) {
+        if (target == null || resource == 0 || activityDestroyed) return;
+        RequestOptions options = new RequestOptions()
+                .override(width, height)
+                .format(DecodeFormat.PREFER_RGB_565)
+                .diskCacheStrategy(DiskCacheStrategy.RESOURCE)
+                .dontAnimate();
+        Glide.with(target).load(resource).apply(options).into(target);
+    }
+
+    private void loadPublishedServiceImage(ImageView target, Service service, int fallbackResource,
+            int requestedWidth, int requestedHeight) {
+        if (target == null || activityDestroyed) return;
+        Glide.with(target).clear(target);
+        String url = appControl == null || appControl.media == null || service == null
+                ? "" : appControl.media.heroImageForService(service.getId());
+        if (TextUtils.isEmpty(url) && appControl != null && appControl.media != null && service != null) {
+            url = appControl.media.imageForService(service.getId());
+        }
+        if (TextUtils.isEmpty(url) && appControl != null && appControl.media != null) {
+            url = appControl.media.heroImageUrl;
+        }
+        int width = isConstrainedDevice() ? Math.min(480, requestedWidth) : requestedWidth;
+        int height = isConstrainedDevice() ? Math.min(320, requestedHeight) : requestedHeight;
+        RequestOptions options = new RequestOptions()
+                .override(width, height)
+                .format(DecodeFormat.PREFER_RGB_565)
+                .diskCacheStrategy(DiskCacheStrategy.AUTOMATIC)
+                .dontAnimate();
+        if (!isSafeRemoteImageUrl(url)) {
+            if (fallbackResource != 0) Glide.with(target).load(fallbackResource).apply(options).into(target);
+            return;
+        }
+        if (fallbackResource != 0) {
+            Glide.with(target).load(url).apply(options)
+                    .error(Glide.with(target).load(fallbackResource).apply(options))
+                    .into(target);
+        } else {
+            Glide.with(target).load(url).apply(options).into(target);
+        }
     }
 
     private void runAdminAction(AppControlConfig.ContentItem item) {
@@ -2004,30 +2707,358 @@ public class MainActivity extends Activity {
     }
 
     private void showHome() {
+        boolean returningToHome = !"home".equals(currentScreen);
+        if (returningToHome) serviceAreaBannerDismissedOnCurrentHome = false;
+        // Restore the last verified address before the Home UI is drawn. Reopening the app at
+        // the same place therefore never flashes "Finding your exact address" or asks for
+        // location again; a quiet 50 m movement monitor handles later changes.
+        restorePersistedDetectedHomeHeader();
+        final int renderGeneration = ++homeRenderGeneration;
         setCurrentScreen("home");
         showAppChrome();
         setActiveNav(navHome);
         resetScreen();
         restoreLatestActiveBookingFromStore();
         showLatestBookingFooter(false);
-        if (appControl.uiSectionVisible("hero")) addHeroBanner();
-        if (appControl.uiSectionVisible("announcements")) { addAdminContent(appControl.banners, false); addAdminContent(appControl.announcements, true); }
-        if (appControl.uiSectionVisible("quick_services")) addQuickServiceStrip();
-        if (appControl.uiSectionVisible("commercial") && featureEnabled(FeatureRegistry.COMMERCIAL_SERVICES)) addCommercialServicesCard();
+        renderHomeSection(renderGeneration, 0);
+        carouselHandler.postDelayed(() -> checkHomeServiceAvailability(false), 250L);
+        showHomeLaunchLoadingOnce();
+    }
 
-        if (appControl.uiSectionVisible("popular_services")) addServiceShowcaseSection(
-                "Popular Services",
-                new String[]{"ac", "electrician", "plumbing", "carpenter", "cleaning", "laundry"}
-        );
-        if (appControl.uiSectionVisible("more_services")) addServiceShowcaseSection(
-                "More Services",
-                new String[]{"roadside", "painting", "interior", "ro", "pest", "appliances"}
-        );
+    @SuppressLint("MissingPermission")
+    private void checkHomeServiceAvailability(boolean force) {
+        if (activityDestroyed || !loggedIn || homeAvailabilityRequestInFlight) return;
+        long now = SystemClock.elapsedRealtime();
+        boolean hasManualSavedAddress = hasManualHomeAddressSelected();
+        boolean hasPersistedDetectedAddress = !force && restorePersistedDetectedHomeHeader();
+        if (!force && homeAvailabilityCheckStarted
+                && now - homeAvailabilityCheckedAtMillis < HOME_LOCATION_RECHECK_DEBOUNCE_MS) return;
+        homeAvailabilityCheckStarted = true;
+        homeAvailabilityCheckedAtMillis = now;
 
-        if (appControl.uiSectionVisible("feature_strip")) addFeatureStrip();
+        // A deliberately selected manual address must remain stable until the customer taps
+        // the header and asks to use GPS again.
+        if (!force && hasManualSavedAddress) return;
+        if (!hasStartupLocationPermission()) {
+            // A previously verified address is still useful when a customer later revokes
+            // permission. Keep that saved header instead of presenting a permission dialog on
+            // every Home open. The explicit location picker continues to request permission.
+            if (hasPersistedDetectedAddress) return;
+            homeServiceAreaState = ServiceAreaPolicy.State.UNKNOWN;
+            maybeShowHomeLocationRequiredPrompt(true);
+            return;
+        }
+        LocationManager manager = (LocationManager) getSystemService(LOCATION_SERVICE);
+        if (manager == null || !isDeviceLocationEnabled(manager)) {
+            if (hasPersistedDetectedAddress) return;
+            homeServiceAreaState = ServiceAreaPolicy.State.UNKNOWN;
+            maybeShowHomeLocationRequiredPrompt(false);
+            return;
+        }
+        Location cached = bestLastKnownLocation(manager);
+        if (!force && hasPersistedDetectedAddress) {
+            // Do not turn every app resume into a fresh GPS request. A fresh last-known fix is
+            // enough to decide whether the device has actually crossed the 50 m threshold.
+            if (cached == null || !LocationQuality.usableForHeader(cached)
+                    || !hasMovedFromPersistedDetectedHome(cached)) {
+                startHomeLocationMovementMonitor(manager);
+                return;
+            }
+        }
+        if (cached != null) applyHomeServiceAreaLocation(cached);
+        String provider = startupLocationProvider(manager);
+        if (TextUtils.isEmpty(provider)) {
+            startHomeLocationMovementMonitor(manager);
+            return;
+        }
+        homeAvailabilityRequestInFlight = true;
+        homeAvailabilityLocationListener = new LocationListener() {
+            @Override public void onLocationChanged(Location location) {
+                // An approximate network fix can label the header immediately,
+                // while dispatch still waits for the stricter production fix.
+                if (!LocationQuality.usable(location)) {
+                    // On a first Home open there is no prior detected-mode flag yet. Accept a
+                    // header-safe network fix unless the customer explicitly chose a manual
+                    // address; otherwise an ordinary 100 m network fix is ignored forever.
+                    if (!hasManualHomeAddressSelected() && LocationQuality.usableForHeader(location)) {
+                        headerPrefersDetectedLocation = true;
+                        headerLocationFixReady = true;
+                        // A network provider can publish several slightly different 100 m
+                        // fixes in the first few seconds.  Once an address is persisted, do
+                        // not let that stationary jitter restart reverse geocoding and put
+                        // "Finding your exact address…" back under the city.
+                        if (!hasPersistedDetectedHomeAddress()
+                                || hasMovedFromPersistedDetectedHome(location)) {
+                            rememberDetectedHomeLocation(location, false);
+                        } else {
+                            restorePersistedDetectedHomeHeader();
+                            refreshHomeLocationLabels();
+                        }
+                        // Stop only the low-accuracy framework listener. The short-lived
+                        // Fused high-accuracy request keeps running and can replace this
+                        // coarse city fix with the customer's building/landmark address.
+                        clearHomeAvailabilityManagerUpdates();
+                    }
+                    return;
+                }
+                clearHomeAvailabilityLocationRequest();
+                applyHomeServiceAreaLocation(location);
+            }
+        };
+        homeAvailabilityTimeoutRunnable = () -> {
+            clearHomeAvailabilityLocationRequest();
+            if (headerPrefersDetectedLocation && "home".equals(currentScreen)) {
+                if (!headerLocationFixReady) {
+                    headerPrefersDetectedLocation = false;
+                    refreshHomeLocationLabels();
+                    // There was no usable device fix at all. This is the only case where
+                    // asking the customer to revisit phone location settings is useful.
+                    SafeToast.makeText(this, "We could not detect your location. Check location settings and try again.",
+                            Toast.LENGTH_LONG).show();
+                    return;
+                }
+                // A fresh network/approximate fix is sufficient for the home header and
+                // reverse geocoding. Do not show a scary "precise location" warning after
+                // the city is already known; strict accuracy stays enforced later for the
+                // actual booking/dispatch location.
+                if (!headerAddressResolvedForCurrentFix && homeGeocodeRetryCount >= HOME_GEOCODE_MAX_RETRIES) {
+                    reportHomeAddressLookupFailure(homeGeocodeGeneration);
+                }
+            }
+        };
+        carouselHandler.postDelayed(homeAvailabilityTimeoutRunnable, 20_000L);
+        boolean requested = false;
+        for (String candidate : new String[]{LocationManager.GPS_PROVIDER, LocationManager.NETWORK_PROVIDER}) {
+            try {
+                if (!manager.isProviderEnabled(candidate)) continue;
+                manager.requestLocationUpdates(candidate, 1000L, 0f,
+                        homeAvailabilityLocationListener, Looper.getMainLooper());
+                requested = true;
+            } catch (SecurityException | IllegalArgumentException ignored) {
+                // One unavailable provider must not prevent the other from responding.
+            }
+        }
+        requestHighAccuracyHomeLocation();
+        if (!requested && homeFusedLocationCallback == null) homeAvailabilityTimeoutRunnable.run();
+    }
+
+    private void applyHomeServiceAreaLocation(Location location) {
+        if (!LocationQuality.usable(location) || activityDestroyed) return;
+        serviceLat = location.getLatitude();
+        serviceLng = location.getLongitude();
+        hasServiceLocation = true;
+        if (headerPrefersDetectedLocation && "home".equals(currentScreen)) {
+            headerLocationFixReady = true;
+        }
+        rememberDetectedHomeLocation(location);
+        ServiceAreaPolicy.State previous = homeServiceAreaState;
+        homeServiceAreaState = ServiceAreaPolicy.evaluate(location.getLatitude(), location.getLongitude());
+        homeAvailabilityCheckedAtMillis = SystemClock.elapsedRealtime();
+        if ("home".equals(currentScreen)) {
+            requestHomeHeaderWeather();
+            LocationManager manager = (LocationManager) getSystemService(LOCATION_SERVICE);
+            if (manager != null) startHomeLocationMovementMonitor(manager);
+        }
+        if (previous != homeServiceAreaState && "home".equals(currentScreen)) {
+            showHome();
+            mainScroll.post(() -> mainScroll.scrollTo(0, 0));
+        }
+    }
+
+    private void clearHomeAvailabilityLocationRequest() {
+        if (homeAvailabilityTimeoutRunnable != null) {
+            carouselHandler.removeCallbacks(homeAvailabilityTimeoutRunnable);
+            homeAvailabilityTimeoutRunnable = null;
+        }
+        clearHomeAvailabilityManagerUpdates();
+        if (homeFusedLocationCallback != null && homeFusedLocationClient != null) {
+            homeFusedLocationClient.removeLocationUpdates(homeFusedLocationCallback);
+        }
+        homeFusedLocationCallback = null;
+        homeAvailabilityRequestInFlight = false;
+    }
+
+    /** Removes only LocationManager callbacks. A Fused high-accuracy request may still be
+     * running, so it must not be cancelled when a coarse network city arrives first. */
+    private void clearHomeAvailabilityManagerUpdates() {
+        if (homeAvailabilityLocationListener != null) {
+            try {
+                LocationManager manager = (LocationManager) getSystemService(LOCATION_SERVICE);
+                if (manager != null) manager.removeUpdates(homeAvailabilityLocationListener);
+            } catch (SecurityException ignored) { }
+            homeAvailabilityLocationListener = null;
+        }
+    }
+
+    @SuppressLint("MissingPermission")
+    private void requestHighAccuracyHomeLocation() {
+        if (activityDestroyed || !activityForeground || !"home".equals(currentScreen)
+                || !hasPreciseLocationPermission() || homeFusedLocationCallback != null) return;
+        try {
+            if (homeFusedLocationClient == null) {
+                homeFusedLocationClient = LocationServices.getFusedLocationProviderClient(this);
+            }
+            LocationRequest request = new LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, 1_000L)
+                    .setMinUpdateIntervalMillis(500L)
+                    .setMaxUpdateAgeMillis(5_000L)
+                    .setWaitForAccurateLocation(true)
+                    .setDurationMillis(10_000L)
+                    .setMaxUpdates(1)
+                    .build();
+            homeFusedLocationCallback = new LocationCallback() {
+                @Override public void onLocationResult(LocationResult result) {
+                    Location location = result == null ? null : result.getLastLocation();
+                    if (!LocationQuality.usable(location)) return;
+                    Log.i("HomeLocation", "Fresh high-accuracy location received; accuracy="
+                            + location.getAccuracy() + "m");
+                    clearHomeAvailabilityLocationRequest();
+                    applyHomeServiceAreaLocation(location);
+                }
+            };
+            homeFusedLocationClient.requestLocationUpdates(request, homeFusedLocationCallback,
+                    Looper.getMainLooper());
+        } catch (Exception error) {
+            // LocationManager remains available as a safe on-device fallback.
+            homeFusedLocationCallback = null;
+            Log.w("HomeLocation", "High-accuracy location request unavailable", error);
+        }
+    }
+
+    /**
+     * While Home is visible, observe only meaningful movement. The monitor is removed as soon
+     * as Home is backgrounded, so it is not a background tracker and it cannot repeatedly wake
+     * the app. Network location is intentionally used here; a strict GPS fix is still required
+     * by the booking flow before dispatch.
+     */
+    @SuppressLint("MissingPermission")
+    private void startHomeLocationMovementMonitor(LocationManager manager) {
+        if (manager == null || homeLocationMovementListener != null || activityDestroyed
+                || !activityForeground || !"home".equals(currentScreen)
+                || !hasStartupLocationPermission() || !isDeviceLocationEnabled(manager)
+                || !hasPersistedDetectedHomeAddress()) return;
+        homeLocationMovementListener = new LocationListener() {
+            @Override public void onLocationChanged(Location location) {
+                if (activityDestroyed || !activityForeground || !"home".equals(currentScreen)
+                        || !LocationQuality.usableForHeader(location)
+                        || !hasMovedFromPersistedDetectedHome(location)) return;
+                // The persisted header remains visible while the new address resolves; no
+                // spinner, permission sheet, or misleading precise-location toast is shown.
+                headerPrefersDetectedLocation = true;
+                headerLocationFixReady = true;
+                if (LocationQuality.usable(location)) {
+                    applyHomeServiceAreaLocation(location);
+                } else {
+                    rememberDetectedHomeLocation(location, false);
+                    homeAvailabilityCheckedAtMillis = SystemClock.elapsedRealtime();
+                }
+            }
+        };
+        try {
+            if (!manager.isProviderEnabled(LocationManager.NETWORK_PROVIDER)) {
+                homeLocationMovementListener = null;
+                return;
+            }
+            manager.requestLocationUpdates(LocationManager.NETWORK_PROVIDER,
+                    HOME_LOCATION_MOVEMENT_INTERVAL_MS, HOME_LOCATION_MOVEMENT_DISTANCE_METERS,
+                    homeLocationMovementListener, Looper.getMainLooper());
+        } catch (SecurityException | IllegalArgumentException ignored) {
+            homeLocationMovementListener = null;
+        }
+    }
+
+    private void clearHomeLocationMovementMonitor() {
+        if (homeLocationMovementListener == null) return;
+        try {
+            LocationManager manager = (LocationManager) getSystemService(LOCATION_SERVICE);
+            if (manager != null) manager.removeUpdates(homeLocationMovementListener);
+        } catch (SecurityException ignored) {
+            // The listener is local to this Activity and is safe to discard even after a
+            // permission change.
+        }
+        homeLocationMovementListener = null;
+    }
+
+    /**
+     * Build the rich home screen across frames.  Constructing every card and image in one
+     * main-thread turn causes skipped frames (and can trigger an ANR on lower-end phones).
+     */
+    private void renderHomeSection(int renderGeneration, int step) {
+        if (activityDestroyed || renderGeneration != homeRenderGeneration || !"home".equals(currentScreen)) return;
+        int sectionStep = step;
+        int previousChildCount = screenContent.getChildCount();
+        if (step >= 1 && step <= 5) sectionStep = java.util.Arrays.asList("quick_services", "commercial", "popular_services", "more_services", "feature_strip").indexOf(appControl.sectionOrder.get(step - 1)) + 1;
+        switch (sectionStep) {
+            case 0:
+                addRemoteHeaderNotices();
+                if (homeServiceAreaState == ServiceAreaPolicy.State.UNAVAILABLE
+                        && !serviceAreaBannerDismissedOnCurrentHome) {
+                    screenContent.addView(serviceAreaUnavailableBanner(), margin(-1, -2, 0, 0, 0, 0));
+                }
+                if (appControl.uiSectionVisible("hero")) addHeroBanner();
+                if (appControl.uiSectionVisible("announcements")) {
+                    addAdminContent(appControl.banners, false);
+                    addAdminContent(appControl.announcements, true);
+                }
+                break;
+            case 1:
+                if (appControl.uiSectionVisible("quick_services")) addQuickServiceStrip();
+                break;
+            case 2:
+                if (appControl.uiSectionVisible("commercial")
+                        && featureEnabled(FeatureRegistry.COMMERCIAL_SERVICES)) {
+                    addCommercialServicesCard();
+                }
+                break;
+            case 3:
+                if (appControl.uiSectionVisible("popular_services")) addServiceShowcaseSection(
+                        "Popular Services",
+                        new String[]{"ac", "electrician", "plumbing", "carpenter", "cleaning", "laundry"}
+                );
+                break;
+            case 4:
+                if (appControl.uiSectionVisible("more_services")) addServiceShowcaseSection(
+                        "More Services",
+                        new String[]{"roadside", "painting", "interior", "ro", "pest", "appliances"}
+                );
+                break;
+            case 5:
+                if (appControl.uiSectionVisible("feature_strip")) addFeatureStrip();
+                break;
+            default:
+                return;
+        }
+        if (step > 0 && appControl.sectionSpacing >= 0 && screenContent.getChildCount() > previousChildCount) {
+            View section = screenContent.getChildAt(previousChildCount);
+            if (section.getLayoutParams() instanceof LinearLayout.LayoutParams) {
+                LinearLayout.LayoutParams params = (LinearLayout.LayoutParams) section.getLayoutParams();
+                params.topMargin = dp(appControl.sectionSpacing);
+                section.setLayoutParams(params);
+            }
+        }
+        carouselHandler.postDelayed(() -> renderHomeSection(renderGeneration, step + 1), 16L);
+    }
+
+    private void addRemoteHeaderNotices() {
+        for (int i = 0; i < Math.min(5, appControl.headerNotices.length()); i++) {
+            JSONObject item = appControl.headerNotices.optJSONObject(i);
+            if (item == null || !item.optBoolean("enabled", true)) continue;
+            LinearLayout strip = vertical();
+            int padding = dp(Math.max(8, Math.min(24, item.optInt("padding", 12))));
+            strip.setPadding(dp(16), padding, dp(16), padding);
+            int ink = Color.rgb(126, 0, 18), background = Color.rgb(255, 248, 249);
+            try { ink = Color.parseColor(item.optString("textColor", "#7e0012")); } catch (IllegalArgumentException ignored) { }
+            try { background = Color.parseColor(item.optString("backgroundColor", "#fff8f9")); } catch (IllegalArgumentException ignored) { }
+            strip.setBackgroundColor(background);
+            int size = Math.max(11, Math.min(20, item.optInt("fontSize", 13)));
+            String title = item.optString("title", ""), message = item.optString("message", "");
+            if (!title.isEmpty()) strip.addView(text(title, size, ink, true));
+            if (!message.isEmpty()) strip.addView(text(message, size, ink, false));
+            if (strip.getChildCount() > 0) screenContent.addView(strip, margin(-1, -2, 0, 0, 0, 0));
+        }
     }
 
     private void showLogin() {
+        cancelOtpVerification();
         customerOtpTimerSequence++;
         setCurrentScreen("login");
         stopBannerCarousel();
@@ -2119,10 +3150,10 @@ public class MainActivity extends Activity {
         actions.setClipToPadding(true);
 
         ImageView namastePerson = new ImageView(this);
-        namastePerson.setImageResource(R.drawable.login_namaste_professional);
         namastePerson.setScaleType(ImageView.ScaleType.CENTER_INSIDE);
         namastePerson.setAdjustViewBounds(false);
         actions.addView(namastePerson, margin(-1, 104, 86, 0, 86, -8));
+        loadLoginArtworkAsync(namastePerson);
 
         TextView welcome = text("✦  Namaste!  ✦", 28, LOGIN_ROSE_DARK, false);
         welcome.setTypeface(Typeface.create(Typeface.SERIF, Typeface.BOLD_ITALIC));
@@ -2144,13 +3175,13 @@ public class MainActivity extends Activity {
             String name = normalizeCustomerNameInput(nameInput.getText().toString());
             if (name.length() < 2) {
                 nameInput.requestFocus();
-                Toast.makeText(this, "Enter your full name", Toast.LENGTH_SHORT).show();
+                SafeToast.makeText(this, "Enter your full name", Toast.LENGTH_SHORT).show();
                 return;
             }
             String phone = normalizeCustomerPhoneInput(phoneInput.getText().toString());
             if (!isValidCustomerMobile(phone)) {
                 phoneInput.requestFocus();
-                Toast.makeText(this, "Enter a valid 10-digit mobile number", Toast.LENGTH_SHORT).show();
+                SafeToast.makeText(this, "Enter a valid 10-digit mobile number", Toast.LENGTH_SHORT).show();
                 return;
             }
             requestCustomerOtp(name, phone);
@@ -2170,6 +3201,34 @@ public class MainActivity extends Activity {
         loginActionsCard.setTranslationY(0f);
         screenContent.addView(actions, margin(-1, -2, 16, 0, 16, 20));
         screenContent.post(() -> fitLoginContentToViewport(hero));
+    }
+
+    private void loadLoginArtworkAsync(ImageView target) {
+        if (target == null || activityDestroyed || artworkExecutor.isShutdown()) return;
+        try {
+            artworkExecutor.execute(() -> {
+                BitmapFactory.Options bounds = new BitmapFactory.Options();
+                bounds.inJustDecodeBounds = true;
+                BitmapFactory.decodeResource(getResources(), R.drawable.login_namaste_professional, bounds);
+                int sample = 1;
+                while (bounds.outWidth / (sample * 2) >= 320 && bounds.outHeight / (sample * 2) >= 320) {
+                    sample *= 2;
+                }
+                BitmapFactory.Options options = new BitmapFactory.Options();
+                options.inSampleSize = sample;
+                options.inPreferredConfig = Bitmap.Config.ARGB_8888;
+                Bitmap bitmap = BitmapFactory.decodeResource(
+                        getResources(), R.drawable.login_namaste_professional, options);
+                carouselHandler.post(() -> {
+                    if (!activityDestroyed && "login".equals(currentScreen)
+                            && target.isAttachedToWindow() && bitmap != null) {
+                        target.setImageBitmap(bitmap);
+                    }
+                });
+            });
+        } catch (RejectedExecutionException ignored) {
+            // Activity is closing; no artwork is needed.
+        }
     }
 
     private EditText loginInlineNameInput() {
@@ -2456,157 +3515,6 @@ public class MainActivity extends Activity {
         return button;
     }
 
-    private void showEmailLoginDialog() {
-        showCustomerEmailAuthDialog(false);
-    }
-
-    private void showCustomerEmailAuthDialog(boolean createAccount) {
-        AlertDialog dialog = new AlertDialog.Builder(this).create();
-        LinearLayout sheet = vertical();
-        sheet.setPadding(dp(18), dp(18), dp(18), dp(18));
-        sheet.setBackground(loginMainCardDrawable());
-
-        sheet.addView(text(createAccount ? "Create your account" : "Continue with Email", 20, BLACK, true));
-        sheet.addView(text(
-                createAccount ? "Register securely with your email address." : "Sign in with your registered email address.",
-                12,
-                MUTED,
-                false
-        ), margin(-1, -2, 0, 4, 0, 14));
-
-        EditText name = null;
-        if (createAccount) {
-            name = loginInput("Full name", InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_CAP_WORDS, R.drawable.ic_login_user);
-            sheet.addView(name, margin(-1, 50, 0, 0, 0, 12));
-        }
-
-        EditText email = loginInput(
-                "Email address",
-                InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_EMAIL_ADDRESS,
-                R.drawable.ic_login_user
-        );
-        email.setText(customerEmail());
-        sheet.addView(email, margin(-1, 50, 0, 0, 0, 12));
-
-        EditText password = loginInput(
-                "Password",
-                InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_PASSWORD,
-                R.drawable.ic_auth_lock
-        );
-        sheet.addView(password, margin(-1, 50, 0, 0, 0, 14));
-
-        EditText finalName = name;
-        View button = loginPrimaryButton(createAccount ? "Create Account" : "Sign In");
-        button.setOnClickListener(view -> {
-            String enteredEmail = email.getText().toString().trim().toLowerCase(Locale.US);
-            String enteredPassword = password.getText().toString();
-            String enteredName = finalName == null ? "" : finalName.getText().toString().trim();
-            if (!enteredEmail.contains("@") || !enteredEmail.contains(".")) {
-                Toast.makeText(this, "Enter a valid email address", Toast.LENGTH_SHORT).show();
-                return;
-            }
-            if (enteredPassword.length() < 6) {
-                Toast.makeText(this, "Password must contain at least 6 characters", Toast.LENGTH_SHORT).show();
-                return;
-            }
-            if (createAccount && TextUtils.isEmpty(enteredName)) {
-                Toast.makeText(this, "Enter your full name", Toast.LENGTH_SHORT).show();
-                return;
-            }
-            button.setEnabled(false);
-            if (firebaseAuth == null) firebaseAuth = FirebaseAuth.getInstance();
-            if (createAccount) {
-                firebaseAuth.createUserWithEmailAndPassword(enteredEmail, enteredPassword)
-                        .addOnSuccessListener(result -> {
-                            putSecureString(KEY_CUSTOMER_EMAIL, enteredEmail);
-                            putSecureString(KEY_CUSTOMER_NAME, enteredName);
-                            dialog.dismiss();
-                            completeLogin(enteredName, "email");
-                        })
-                        .addOnFailureListener(error -> {
-                            button.setEnabled(true);
-                            Toast.makeText(this, emailAuthError(error), Toast.LENGTH_LONG).show();
-                        });
-            } else {
-                firebaseAuth.signInWithEmailAndPassword(enteredEmail, enteredPassword)
-                        .addOnSuccessListener(result -> {
-                            FirebaseUser user = result.getUser();
-                            String resolvedName = customerName();
-                            if (user != null && !TextUtils.isEmpty(user.getDisplayName())) {
-                                resolvedName = user.getDisplayName();
-                            }
-                            putSecureString(KEY_CUSTOMER_EMAIL, enteredEmail);
-                            dialog.dismiss();
-                            completeLogin(resolvedName, "email");
-                        })
-                        .addOnFailureListener(error -> {
-                            button.setEnabled(true);
-                            Toast.makeText(this, emailAuthError(error), Toast.LENGTH_LONG).show();
-                        });
-            }
-        });
-        sheet.addView(button, margin(-1, 52, 0, 0, 0, 8));
-
-        TextView alternate = text(
-                createAccount ? "Already registered? Sign in" : "New to ApnaServo? Create account",
-                12,
-                LOGIN_ROSE,
-                true
-        );
-        alternate.setGravity(Gravity.CENTER);
-        alternate.setPadding(0, dp(10), 0, dp(8));
-        alternate.setOnClickListener(view -> {
-            dialog.dismiss();
-            showCustomerEmailAuthDialog(!createAccount);
-        });
-        sheet.addView(alternate, new LinearLayout.LayoutParams(-1, -2));
-
-        if (!createAccount) {
-            TextView forgot = text("Forgot password?", 12, MUTED, false);
-            forgot.setGravity(Gravity.CENTER);
-            forgot.setPadding(0, dp(8), 0, 0);
-            forgot.setOnClickListener(view -> {
-                String enteredEmail = email.getText().toString().trim().toLowerCase(Locale.US);
-                if (!enteredEmail.contains("@")) {
-                    Toast.makeText(this, "Enter your email address first", Toast.LENGTH_SHORT).show();
-                    return;
-                }
-                firebaseAuth.sendPasswordResetEmail(enteredEmail)
-                        .addOnSuccessListener(result -> Toast.makeText(this, "Password reset email sent", Toast.LENGTH_LONG).show())
-                        .addOnFailureListener(error -> Toast.makeText(this, emailAuthError(error), Toast.LENGTH_LONG).show());
-            });
-            sheet.addView(forgot, new LinearLayout.LayoutParams(-1, -2));
-        }
-
-        dialog.setView(sheet, 0, 0, 0, 0);
-        dialog.setOnShowListener(d -> {
-            android.view.Window window = dialog.getWindow();
-            if (window != null) {
-                window.setBackgroundDrawable(new android.graphics.drawable.ColorDrawable(Color.TRANSPARENT));
-                window.setLayout((int) (getResources().getDisplayMetrics().widthPixels * 0.9f), WindowManager.LayoutParams.WRAP_CONTENT);
-            }
-        });
-        dialog.show();
-    }
-
-    private String emailAuthError(Exception error) {
-        String message = error == null || error.getMessage() == null ? "Email login failed" : error.getMessage();
-        String normalized = message.toLowerCase(Locale.US);
-        if (normalized.contains("password is invalid") || normalized.contains("invalid credential")) {
-            return "Incorrect email or password";
-        }
-        if (normalized.contains("no user record") || normalized.contains("user may have been deleted")) {
-            return "No account was found for this email";
-        }
-        if (normalized.contains("already in use")) {
-            return "An account already exists for this email";
-        }
-        if (normalized.contains("network")) {
-            return NetworkError.body(NetworkError.NO_INTERNET);
-        }
-        return NetworkError.body(NetworkError.safe(message));
-    }
-
     private void showPhoneLoginDialog() {
         showLoginDetailsDialog(false);
     }
@@ -2646,7 +3554,7 @@ public class MainActivity extends Activity {
             String entered = value.getText().toString().trim();
             if (emailMode) {
                 if (!entered.contains("@") || !entered.contains(".")) {
-                    Toast.makeText(this, "Enter a valid email address", Toast.LENGTH_SHORT).show();
+                    SafeToast.makeText(this, "Enter a valid email address", Toast.LENGTH_SHORT).show();
                     return;
                 }
                 putSecureString(KEY_CUSTOMER_EMAIL, entered);
@@ -2655,7 +3563,7 @@ public class MainActivity extends Activity {
             } else {
                 String cleanPhone = entered.replaceAll("\\D", "");
                 if (!isValidCustomerMobile(cleanPhone)) {
-                    Toast.makeText(this, "Enter a valid mobile number", Toast.LENGTH_SHORT).show();
+                    SafeToast.makeText(this, "Enter a valid mobile number", Toast.LENGTH_SHORT).show();
                     return;
                 }
                 dialog.dismiss();
@@ -2716,19 +3624,6 @@ public class MainActivity extends Activity {
         card.addView(text("Login to Apna Servo", 23, BLACK, true));
         card.addView(text("Secure access to bookings, saved addresses, offers, and support.", 14, MUTED, false), margin(-1, -2, 0, 6, 0, 18));
 
-        TextView google = socialButton("G   Continue with Google");
-        google.setOnClickListener(view -> startGoogleSignIn());
-        card.addView(google, margin(-1, 54, 0, 0, 0, 10));
-
-        LinearLayout altRow = horizontal();
-        altRow.setGravity(Gravity.CENTER);
-        altRow.addView(dividerLine(), new LinearLayout.LayoutParams(0, dp(1), 1));
-        TextView orText = text("  or use mobile  ", 12, MUTED, false);
-        orText.setGravity(Gravity.CENTER);
-        altRow.addView(orText);
-        altRow.addView(dividerLine(), new LinearLayout.LayoutParams(0, dp(1), 1));
-        card.addView(altRow, margin(-1, 28, 0, 0, 0, 8));
-
         TextView nameLabel = text("Full name", 12, BLACK, true);
         card.addView(nameLabel);
 
@@ -2772,7 +3667,7 @@ public class MainActivity extends Activity {
             }
             String cleanPhone = phone.getText().toString().replaceAll("\\D", "");
             if (!isValidCustomerMobile(cleanPhone)) {
-                Toast.makeText(this, "Enter a valid mobile number", Toast.LENGTH_SHORT).show();
+                SafeToast.makeText(this, "Enter a valid mobile number", Toast.LENGTH_SHORT).show();
                 return;
             }
             requestCustomerOtp(cleanName, cleanPhone);
@@ -2805,32 +3700,44 @@ public class MainActivity extends Activity {
     private void requestCustomerOtp(String name, String phone) {
         String cleanPhone = normalizeCustomerPhoneInput(phone);
         if (!isValidCustomerMobile(cleanPhone)) {
-            Toast.makeText(this, "Enter a valid mobile number", Toast.LENGTH_SHORT).show();
+            SafeToast.makeText(this, "Enter a valid mobile number", Toast.LENGTH_SHORT).show();
             return;
         }
         String cleanName = TextUtils.isEmpty(name == null ? "" : name.trim()) ? "ApnaServo Customer" : name.trim();
         pendingCustomerOtpPhone = cleanPhone;
         pendingCustomerOtpName = cleanName;
         pendingCustomerOtpRequestId = "";
+        pendingCustomerOtpExpiresAtElapsedRealtime = SystemClock.elapsedRealtime()
+                + OTP_DEFAULT_TTL_SECONDS * 1000L;
         showCustomerOtpScreen(cleanName, cleanPhone);
         sendCustomerOtpRequest(cleanPhone);
     }
 
     private void sendCustomerOtpRequest(String cleanPhone) {
-        Toast.makeText(this, "Sending verification code...", Toast.LENGTH_SHORT).show();
-        backendClient.sendOtp(cleanPhone, "user", new BackendClient.JsonCallback() {
+        cancelOtpVerification();
+        final int requestGeneration = ++customerOtpRequestGeneration;
+        final String requestedPhone = normalizeCustomerPhoneInput(cleanPhone);
+        SafeToast.makeText(this, "Sending verification code...", Toast.LENGTH_SHORT).show();
+        backendClient.sendOtp(requestedPhone, "user", new BackendClient.JsonCallback() {
             @Override
             public void onSuccess(JSONObject object) {
+                if (requestGeneration != customerOtpRequestGeneration
+                        || !requestedPhone.equals(pendingCustomerOtpPhone)) return;
                 pendingCustomerOtpRequestId = object.optString("requestId", "");
+                int expiresInSeconds = OTP_DEFAULT_TTL_SECONDS;
+                pendingCustomerOtpExpiresAtElapsedRealtime = SystemClock.elapsedRealtime()
+                        + expiresInSeconds * 1000L;
                 String devOtp = object.optString("devOtp", "");
-                Toast.makeText(MainActivity.this,
+                SafeToast.makeText(MainActivity.this,
                         TextUtils.isEmpty(devOtp) ? "Verification code sent" : "Development OTP: " + devOtp,
                         Toast.LENGTH_LONG).show();
             }
 
             @Override
             public void onError(String message) {
-                Toast.makeText(MainActivity.this, otpUserError(message), Toast.LENGTH_LONG).show();
+                if (requestGeneration != customerOtpRequestGeneration
+                        || !requestedPhone.equals(pendingCustomerOtpPhone)) return;
+                SafeToast.makeText(MainActivity.this, otpUserError(message), Toast.LENGTH_LONG).show();
             }
         });
     }
@@ -2857,166 +3764,268 @@ public class MainActivity extends Activity {
 
         android.util.DisplayMetrics metrics = getResources().getDisplayMetrics();
         int widthDp = Math.round(metrics.widthPixels / metrics.density);
-        int heroHeight = Math.max(238, Math.min(282, Math.round(widthDp * 268f / 363f)));
+        int screenHeightDp = Math.round(metrics.heightPixels / metrics.density);
+        // Match the reference composition: a tall cinematic hero with the verification sheet
+        // deliberately floating over its lower edge, rather than two unrelated stacked cards.
+        int heroHeight = Math.max(336, Math.min(404, Math.round(screenHeightDp * .48f)));
         FrameLayout hero = new FrameLayout(this);
-        hero.setBackgroundColor(LOGIN_BG);
+        hero.setBackgroundColor(Color.rgb(29, 24, 25));
         hero.setClipChildren(true);
         hero.setClipToPadding(true);
 
         ImageView heroImage = new ImageView(this);
         heroImage.setImageResource(R.drawable.login_home_repair_hero);
-        // The complete source artwork is fitted as-is: no extra scale, translation, or edge crop.
-        heroImage.setScaleType(ImageView.ScaleType.FIT_CENTER);
+        heroImage.setScaleType(ImageView.ScaleType.CENTER_CROP);
         heroImage.setAdjustViewBounds(false);
         hero.addView(heroImage, new FrameLayout.LayoutParams(-1, -1));
 
-        TextView back = text("‹", 35, Color.rgb(22, 22, 22), false);
+        View heroScrim = new View(this);
+        heroScrim.setBackground(otpHeroScrimDrawable());
+        hero.addView(heroScrim, new FrameLayout.LayoutParams(-1, -1));
+
+        TextView back = text("‹", 34, Color.WHITE, false);
         back.setGravity(Gravity.CENTER);
         back.setContentDescription("Back to phone number");
+        back.setBackground(stroke(Color.argb(94, 15, 18, 24), Color.argb(72, 255, 255, 255), dp(22)));
         back.setOnClickListener(view -> showLogin());
         addPressAnimation(back);
         FrameLayout.LayoutParams backParams = new FrameLayout.LayoutParams(dp(44), dp(44), Gravity.LEFT | Gravity.TOP);
-        backParams.setMargins(dp(7), dp(28), 0, 0);
+        backParams.setMargins(dp(18), dp(34), 0, 0);
         hero.addView(back, backParams);
 
-        LinearLayout brand = vertical();
-        brand.setGravity(Gravity.LEFT);
-        // Always use the untouched project wordmark so the official burgundy/rose colors remain exact.
-        brand.addView(brandImageWordmark(142, 44), new LinearLayout.LayoutParams(dp(142), dp(44)));
-        LinearLayout promise = horizontal();
-        promise.setGravity(Gravity.CENTER_VERTICAL);
-        promise.addView(tintedIcon(R.drawable.ic_login_verified, LOGIN_ROSE, 4), new LinearLayout.LayoutParams(dp(18), dp(18)));
-        promise.addView(text("Your Home, Our Priority", 10, Color.rgb(28, 27, 27), false), margin(-2, -2, 6, 0, 0, 0));
-        brand.addView(promise, margin(-1, 21, 0, -3, 0, 0));
-        FrameLayout.LayoutParams brandParams = new FrameLayout.LayoutParams(dp(190), -2, Gravity.LEFT | Gravity.TOP);
-        brandParams.setMargins(dp(23), dp(57), 0, 0);
-        hero.addView(brand, brandParams);
+        // The reference uses one compact secure-auth badge. A second oversized wordmark
+        // competes with the verification task and pushes the headline out of view.
+        LinearLayout secureBadge = horizontal();
+        secureBadge.setGravity(Gravity.CENTER_VERTICAL);
+        secureBadge.setPadding(dp(10), 0, dp(10), 0);
+        secureBadge.setBackground(stroke(Color.argb(94, 15, 18, 24), Color.argb(55, 255, 255, 255), dp(13)));
+        View badgeDot = new View(this);
+        badgeDot.setBackground(round(LOGIN_ROSE, dp(4)));
+        secureBadge.addView(badgeDot, new LinearLayout.LayoutParams(dp(7), dp(7)));
+        secureBadge.addView(text("Apna", 10, Color.WHITE, true), margin(-2, -2, 6, 0, 0, 0));
+        secureBadge.addView(text("Servo", 10, LOGIN_ROSE, true), margin(-2, -2, 0, 0, 0, 0));
+        secureBadge.addView(text("Secure Auth", 8, Color.rgb(220, 220, 220), true),
+                margin(-2, -2, 8, 0, 0, 0));
 
         LinearLayout heroCopy = vertical();
-        TextView trusted = text("Trusted\nHome", 24, Color.rgb(22, 22, 22), true);
+        heroCopy.addView(secureBadge, margin(-2, 26, 0, 0, 0, 8));
+        SpannableString heroTitle = new SpannableString("Fast, Trusted Doorstep Care");
+        heroTitle.setSpan(new ForegroundColorSpan(Color.rgb(255, 121, 142)),
+                "Fast, Trusted ".length(), heroTitle.length(), Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+        heroTitle.setSpan(new StyleSpan(Typeface.BOLD), 0, heroTitle.length(), Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+        TextView trusted = text("", 20, Color.WHITE, true);
+        trusted.setText(heroTitle);
         trusted.setIncludeFontPadding(false);
-        trusted.setLineSpacing(0, 0.94f);
+        trusted.setSingleLine(true);
+        trusted.setShadowLayer(dp(3), 0f, dp(1), Color.argb(145, 0, 0, 0));
         heroCopy.addView(trusted);
-        TextView services = text("Services", 24, LOGIN_ROSE, true);
-        services.setIncludeFontPadding(false);
-        heroCopy.addView(services);
-        heroCopy.addView(text("Just a tap away.", 11, Color.rgb(38, 36, 36), false), margin(-1, -2, 0, 3, 0, 0));
-        FrameLayout.LayoutParams heroCopyParams = new FrameLayout.LayoutParams(dp(135), -2, Gravity.LEFT | Gravity.BOTTOM);
-        heroCopyParams.setMargins(dp(23), 0, 0, dp(14));
+        // Use a fixed visual anchor instead of the hero's bottom edge: the sheet overlaps
+        // that edge on compact devices, which otherwise hides the Secure Auth and headline.
+        FrameLayout.LayoutParams heroCopyParams = new FrameLayout.LayoutParams(dp(310), -2, Gravity.LEFT | Gravity.TOP);
+        heroCopyParams.setMargins(dp(24), dp(108), 0, 0);
         hero.addView(heroCopy, heroCopyParams);
         screenContent.addView(hero, margin(-1, heroHeight, 0, 0, 0, 0));
 
         LinearLayout card = vertical();
         card.setGravity(Gravity.CENTER_HORIZONTAL);
-        card.setPadding(dp(30), dp(16), dp(30), dp(24));
-        card.setBackground(loginLandingCardDrawable());
-        card.setElevation(dp(10));
+        card.setPadding(dp(24), dp(16), dp(24), dp(20));
+        card.setBackground(otpBottomSheetDrawable());
+        card.setElevation(dp(16));
         card.setClipChildren(true);
         card.setClipToPadding(true);
 
-        FrameLayout shieldBadge = new FrameLayout(this);
-        shieldBadge.setBackground(round(LOGIN_SOFT, dp(28)));
-        shieldBadge.addView(tintedIcon(R.drawable.ic_login_verified, LOGIN_ROSE, 5),
-                new FrameLayout.LayoutParams(dp(29), dp(29), Gravity.CENTER));
-        card.addView(shieldBadge, new LinearLayout.LayoutParams(dp(56), dp(56)));
+        View handle = new View(this);
+        handle.setBackground(round(Color.rgb(218, 218, 218), dp(3)));
+        card.addView(handle, margin(dp(46), dp(4), 0, 0, 0, dp(18)));
 
-        SpannableString headingText = new SpannableString("Enter OTP");
-        headingText.setSpan(new ForegroundColorSpan(LOGIN_ROSE), 6, 9, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+        FrameLayout shieldBadge = new FrameLayout(this);
+        shieldBadge.setBackground(stroke(Color.rgb(255, 248, 249), Color.rgb(255, 202, 211), dp(28)));
+        shieldBadge.setElevation(dp(4));
+        shieldBadge.addView(tintedIcon(R.drawable.ic_login_verified, LOGIN_ROSE, 5),
+                new FrameLayout.LayoutParams(dp(27), dp(27), Gravity.CENTER));
+        card.addView(shieldBadge, new LinearLayout.LayoutParams(dp(58), dp(58)));
+
+        SpannableString headingText = new SpannableString("Verify Your Number");
+        headingText.setSpan(new ForegroundColorSpan(LOGIN_ROSE), 12, 18, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
         headingText.setSpan(new StyleSpan(Typeface.BOLD), 0, headingText.length(), Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
-        TextView heading = text("", 25, BLACK, true);
+        TextView heading = text("", 24, BLACK, true);
         heading.setText(headingText);
         heading.setGravity(Gravity.CENTER);
-        card.addView(heading, margin(-1, -2, 0, 9, 0, 5));
-
-        TextView sent = text("We've sent a 6-digit OTP to", 12, Color.rgb(52, 50, 50), false);
-        sent.setGravity(Gravity.CENTER);
-        card.addView(sent);
+        card.addView(heading, margin(-1, -2, 0, 13, 0, 5));
 
         LinearLayout numberRow = horizontal();
         numberRow.setGravity(Gravity.CENTER);
+        numberRow.addView(text("Code sent to", 11, Color.rgb(104, 101, 101), false));
         TextView number = text("+91 " + groupedCustomerPhone(phone), 13, BLACK, true);
-        numberRow.addView(number);
-        TextView edit = text("Edit", 12, LOGIN_ROSE, false);
+        numberRow.addView(number, margin(-2, -2, 5, 0, 0, 0));
+        TextView edit = text("Edit", 10, LOGIN_ROSE, true);
         edit.setGravity(Gravity.CENTER);
         edit.setPadding(dp(8), 0, dp(8), 0);
+        edit.setBackground(stroke(Color.rgb(255, 241, 243), Color.rgb(255, 205, 214), dp(12)));
         edit.setContentDescription("Edit phone number");
         edit.setOnClickListener(view -> showLogin());
         addPressAnimation(edit);
-        numberRow.addView(edit, new LinearLayout.LayoutParams(dp(52), dp(34)));
-        card.addView(numberRow, margin(-1, 34, 0, 1, 0, 12));
+        numberRow.addView(edit, margin(45, 25, 7, 0, 0, 0));
+        card.addView(numberRow, margin(-1, 28, 0, 0, 0, 15));
 
         LinearLayout otpRow = horizontal();
         otpRow.setGravity(Gravity.CENTER);
         EditText[] boxes = new EditText[6];
+        FrameLayout[] boxShells = new FrameLayout[6];
         for (int i = 0; i < boxes.length; i++) {
             EditText box = new OtpEditText();
             box.setGravity(Gravity.CENTER);
-            box.setTextSize(21);
+            box.setTextSize(20);
             box.setTypeface(Typeface.DEFAULT_BOLD);
             box.setTextColor(BLACK);
             box.setHintTextColor(Color.TRANSPARENT);
             box.setSingleLine(true);
             box.setInputType(InputType.TYPE_CLASS_NUMBER);
             box.setFilters(new InputFilter[]{new InputFilter.LengthFilter(1)});
-            box.setBackground(stroke(Color.WHITE, Color.rgb(247, 199, 207), dp(9)));
+            box.setBackground(stroke(Color.rgb(253, 252, 252), Color.rgb(221, 221, 221), dp(14)));
             box.setPadding(0, 0, 0, 0);
             box.setSelectAllOnFocus(true);
             boxes[i] = box;
-            LinearLayout.LayoutParams boxParams = new LinearLayout.LayoutParams(0, dp(46), 1);
-            if (i > 0) boxParams.setMargins(dp(8), 0, 0, 0);
-            otpRow.addView(box, boxParams);
+            FrameLayout shell = new FrameLayout(this);
+            shell.setPadding(dp(3), dp(3), dp(3), dp(3));
+            boxShells[i] = shell;
+            shell.addView(box, new FrameLayout.LayoutParams(-1, -1));
+            LinearLayout.LayoutParams boxParams = new LinearLayout.LayoutParams(0, dp(62), 1);
+            if (i > 0) boxParams.setMargins(dp(7), 0, 0, 0);
+            otpRow.addView(shell, boxParams);
         }
-        configureOtpBoxes(boxes, LOGIN_ROSE, Color.rgb(247, 199, 207), 9);
+        configurePremiumOtpBoxes(boxes, boxShells);
         startCustomerOtpRetriever(boxes);
-        card.addView(otpRow, margin(-1, 46, 17, 0, 17, 16));
+        card.addView(otpRow, margin(-1, -2, 0, 0, 0, 16));
 
         LinearLayout timerRow = horizontal();
-        timerRow.setGravity(Gravity.CENTER);
-        timerRow.addView(text("OTP will expire in", 12, Color.rgb(42, 40, 40), false));
-        TextView timer = text("01:58", 12, LOGIN_ROSE, true);
-        timerRow.addView(timer, margin(-2, -2, 5, 0, 0, 0));
-        card.addView(timerRow, margin(-1, 30, 0, 0, 0, 10));
+        timerRow.setGravity(Gravity.CENTER_VERTICAL);
+        LinearLayout timerChip = horizontal();
+        timerChip.setGravity(Gravity.CENTER_VERTICAL);
+        timerChip.setPadding(dp(8), 0, dp(8), 0);
+        timerChip.setBackground(stroke(Color.rgb(253, 253, 253), Color.rgb(233, 233, 233), dp(14)));
+        View timerDot = new View(this);
+        timerDot.setBackground(round(LOGIN_ROSE, dp(4)));
+        timerChip.addView(timerDot, new LinearLayout.LayoutParams(dp(7), dp(7)));
+        timerChip.addView(text("OTP expires in", 10, Color.rgb(112, 109, 109), false), margin(-2, -2, 6, 0, 0, 0));
+        TextView timer = text("", 10, BLACK, true);
+        timerChip.addView(timer);
+        timerRow.addView(timerChip, new LinearLayout.LayoutParams(0, dp(29), 1));
+        TextView resend = text("Resend via SMS", 11, Color.rgb(152, 152, 152), true);
+        resend.setGravity(Gravity.RIGHT | Gravity.CENTER_VERTICAL);
+        resend.setPadding(dp(8), 0, 0, 0);
+        addPressAnimation(resend);
+        timerRow.addView(resend, new LinearLayout.LayoutParams(0, dp(29), 1));
+        card.addView(timerRow, margin(-1, -2, 0, 0, 0, 14));
 
         LinearLayout warning = horizontal();
         warning.setGravity(Gravity.CENTER_VERTICAL);
-        warning.setPadding(dp(14), dp(8), dp(14), dp(8));
-        warning.setBackground(round(Color.rgb(255, 239, 242), dp(11)));
-        warning.addView(tintedIcon(R.drawable.ic_auth_lock, LOGIN_ROSE, 5), new LinearLayout.LayoutParams(dp(30), dp(30)));
-        TextView warningText = text("Don't share your OTP with anyone.", 11, Color.rgb(38, 36, 36), false);
-        warning.addView(warningText, margin(0, -2, 14, 0, 0, 0, 1));
-        card.addView(warning, margin(-1, 52, 20, 0, 20, 14));
+        warning.setPadding(dp(11), dp(8), dp(11), dp(8));
+        warning.setBackground(stroke(Color.rgb(255, 247, 248), Color.rgb(255, 219, 225), dp(14)));
+        FrameLayout lockBadge = new FrameLayout(this);
+        lockBadge.setBackground(round(Color.rgb(255, 226, 232), dp(8)));
+        lockBadge.addView(tintedIcon(R.drawable.ic_auth_lock, LOGIN_ROSE, 5),
+                new FrameLayout.LayoutParams(dp(16), dp(16), Gravity.CENTER));
+        warning.addView(lockBadge, new LinearLayout.LayoutParams(dp(30), dp(30)));
+        TextView warningText = text("Security Tip: Never share your ApnaServo OTP with anyone, including service partners.",
+                10, Color.rgb(94, 91, 91), false);
+        warningText.setLineSpacing(dp(1), 1f);
+        warning.addView(warningText, margin(0, -2, 9, 0, 0, 0, 1));
+        card.addView(warning, margin(-1, -2, 0, 0, 0, 14));
 
-        View verify = loginPrimaryButton("Verify OTP");
+        View verify = loginPrimaryButton("Verify & Proceed");
+        verify.setTag("otp_verify_proceed");
         verify.setOnClickListener(view -> {
             StringBuilder value = new StringBuilder();
             for (EditText box : boxes) value.append(box.getText().toString().trim());
             String otp = value.toString().replaceAll("\\D", "");
             if (otp.length() != 6) {
-                Toast.makeText(this, "Enter the valid 6-digit code", Toast.LENGTH_SHORT).show();
+                SafeToast.makeText(this, "Enter the valid 6-digit code", Toast.LENGTH_SHORT).show();
                 return;
             }
             if (TextUtils.isEmpty(pendingCustomerOtpRequestId)) {
-                Toast.makeText(this, "OTP is still being sent. Please wait or resend.", Toast.LENGTH_SHORT).show();
+                SafeToast.makeText(this, "OTP is still being sent. Please wait or resend.", Toast.LENGTH_SHORT).show();
                 return;
             }
             verifyCustomerOtp(name, phone, otp, null, verify);
         });
-        card.addView(verify, margin(-1, 48, 0, 0, 0, 10));
+        card.addView(verify, margin(-1, 58, 0, 0, 0, 18));
 
-        LinearLayout resendRow = horizontal();
-        resendRow.setGravity(Gravity.CENTER);
-        resendRow.addView(text("Didn't receive OTP?", 11, Color.rgb(66, 62, 62), false));
-        TextView resend = text("Resend OTP", 11, LOGIN_ROSE, false);
-        resend.setPadding(dp(7), dp(7), dp(7), dp(7));
-        addPressAnimation(resend);
-        resendRow.addView(resend);
-        card.addView(resendRow, margin(-1, 34, 0, 0, 0, 0));
+        View homeIndicator = new View(this);
+        homeIndicator.setBackground(round(Color.rgb(216, 216, 216), dp(3)));
+        card.addView(homeIndicator, margin(dp(84), dp(4), 0, 0, 0, 0));
 
         startCustomerOtpCountdown(timer, resend, name, phone);
-        screenContent.addView(card, margin(-1, -2, 10, -10, 10, 18));
+        // Light overlap creates the floating-sheet look and still exposes the full hero copy.
+        screenContent.addView(card, margin(-1, -2, 0, -dp(67), 0, 0));
         boxes[0].requestFocus();
         getWindow().setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_STATE_ALWAYS_HIDDEN | WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE);
         animateIn(card, 70);
+    }
+
+    private GradientDrawable otpHeroScrimDrawable() {
+        return new GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM,
+                new int[]{Color.argb(192, 5, 8, 12), Color.argb(82, 5, 8, 12), Color.argb(228, 5, 8, 12)});
+    }
+
+    private GradientDrawable otpBottomSheetDrawable() {
+        GradientDrawable drawable = new GradientDrawable();
+        drawable.setColor(Color.WHITE);
+        float radius = dp(34);
+        drawable.setCornerRadii(new float[]{radius, radius, radius, radius, 0f, 0f, 0f, 0f});
+        return drawable;
+    }
+
+    /** Reference-style OTP cells: only the active cell receives the crimson focus halo. */
+    private void configurePremiumOtpBoxes(EditText[] boxes, FrameLayout[] shells) {
+        for (int i = 0; i < boxes.length; i++) {
+            EditText box = boxes[i];
+            final int index = i;
+            box.setImeOptions(i == boxes.length - 1
+                    ? android.view.inputmethod.EditorInfo.IME_ACTION_DONE
+                    : android.view.inputmethod.EditorInfo.IME_ACTION_NEXT);
+            box.setOnFocusChangeListener((view, hasFocus) -> refreshPremiumOtpBoxBorders(boxes, shells));
+            box.addTextChangedListener(new TextWatcher() {
+                @Override public void beforeTextChanged(CharSequence s, int start, int count, int after) { }
+
+                @Override public void onTextChanged(CharSequence s, int start, int before, int count) {
+                    refreshPremiumOtpBoxBorders(boxes, shells);
+                    if (s != null && s.length() == 1 && index < boxes.length - 1) {
+                        EditText next = boxes[index + 1];
+                        next.requestFocus();
+                        next.setSelection(next.length());
+                    }
+                }
+
+                @Override public void afterTextChanged(Editable s) { }
+            });
+            if (box instanceof OtpEditText) {
+                ((OtpEditText) box).setOnEmptyDeleteListener(() -> {
+                    if (index <= 0) return;
+                    EditText previous = boxes[index - 1];
+                    previous.requestFocus();
+                    previous.setText("");
+                    previous.setSelection(0);
+                    refreshPremiumOtpBoxBorders(boxes, shells);
+                });
+            }
+        }
+        refreshPremiumOtpBoxBorders(boxes, shells);
+    }
+
+    private void refreshPremiumOtpBoxBorders(EditText[] boxes, FrameLayout[] shells) {
+        for (int i = 0; i < boxes.length; i++) {
+            EditText box = boxes[i];
+            FrameLayout shell = shells[i];
+            boolean focused = box.hasFocus();
+            shell.setBackground(focused
+                    ? round(Color.rgb(255, 229, 234), dp(16))
+                    : new ColorDrawable(Color.TRANSPARENT));
+            box.setBackground(stroke(focused ? Color.WHITE : Color.rgb(252, 252, 252),
+                    focused ? LOGIN_ROSE : Color.rgb(221, 221, 221), dp(14)));
+            box.setTextColor(focused ? LOGIN_ROSE_DARK : BLACK);
+            box.setElevation(focused ? dp(2) : 0f);
+        }
     }
 
     private void configureOtpBoxes(EditText[] boxes, int activeColor, int inactiveColor, int radiusDp) {
@@ -3138,23 +4147,26 @@ public class MainActivity extends Activity {
         resend.setEnabled(false);
         resend.setAlpha(0.55f);
         Runnable[] ticker = new Runnable[1];
-        final int[] seconds = {118};
         ticker[0] = () -> {
             if (sequence != customerOtpTimerSequence || !"login_otp".equals(currentScreen)) return;
-            int minutePart = seconds[0] / 60;
-            int secondPart = seconds[0] % 60;
+            long remainingMillis = Math.max(0L,
+                    pendingCustomerOtpExpiresAtElapsedRealtime - SystemClock.elapsedRealtime());
+            int seconds = (int) Math.ceil(remainingMillis / 1000d);
+            int minutePart = seconds / 60;
+            int secondPart = seconds % 60;
             timer.setText(String.format(Locale.US, "%02d:%02d", minutePart, secondPart));
-            if (seconds[0] <= 0) {
+            if (seconds <= 0) {
                 resend.setEnabled(true);
                 resend.setAlpha(1f);
                 return;
             }
-            seconds[0]--;
             carouselHandler.postDelayed(ticker[0], 1000);
         };
         resend.setOnClickListener(view -> {
             if (!resend.isEnabled()) return;
             pendingCustomerOtpRequestId = "";
+            pendingCustomerOtpExpiresAtElapsedRealtime = SystemClock.elapsedRealtime()
+                    + OTP_DEFAULT_TTL_SECONDS * 1000L;
             sendCustomerOtpRequest(normalizeCustomerPhoneInput(phone));
             startCustomerOtpCountdown(timer, resend, name, phone);
         });
@@ -3226,11 +4238,11 @@ public class MainActivity extends Activity {
             for (EditText box : boxes) value.append(box.getText().toString().trim());
             String otp = value.toString().replaceAll("\\D", "");
             if (otp.length() != 6) {
-                Toast.makeText(this, "Enter the valid 6-digit code", Toast.LENGTH_SHORT).show();
+                SafeToast.makeText(this, "Enter the valid 6-digit code", Toast.LENGTH_SHORT).show();
                 return;
             }
             if (TextUtils.isEmpty(pendingCustomerOtpRequestId)) {
-                Toast.makeText(this, "OTP is still being sent. Please wait or resend.", Toast.LENGTH_SHORT).show();
+                SafeToast.makeText(this, "OTP is still being sent. Please wait or resend.", Toast.LENGTH_SHORT).show();
                 return;
             }
             verifyCustomerOtp(name, phone, otp, dialog, verify);
@@ -3268,29 +4280,49 @@ public class MainActivity extends Activity {
     }
 
     private void verifyCustomerOtp(String name, String phone, String otp, AlertDialog dialog, View verifyButton) {
-        if (TextUtils.isEmpty(pendingCustomerOtpRequestId)) {
-            Toast.makeText(this, "Please request a new OTP.", Toast.LENGTH_SHORT).show();
+        if (otpVerificationInFlight) {
             return;
         }
+        if (TextUtils.isEmpty(pendingCustomerOtpRequestId)) {
+            SafeToast.makeText(this, "Please request a new OTP.", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        otpVerificationInFlight = true;
+        activeOtpVerifyButton = verifyButton;
+        final int generation = ++otpVerificationGeneration;
         setOtpVerifyLoading(verifyButton, true);
+        otpVerificationTimeoutRunnable = () -> {
+            if (!isOtpVerificationActive(generation)) return;
+            otpVerificationInFlight = false;
+            otpVerificationGeneration++;
+            otpVerificationTimeoutRunnable = null;
+            setOtpVerifyLoading(activeOtpVerifyButton, false);
+            activeOtpVerifyButton = null;
+            if (!activityDestroyed && !isFinishing()) {
+                SafeToast.makeText(this, "Verification timed out. Check your connection and try again.", Toast.LENGTH_LONG).show();
+            }
+        };
+        carouselHandler.postDelayed(otpVerificationTimeoutRunnable, OTP_VERIFY_TIMEOUT_MS);
         backendClient.verifyOtp(phone, "user", pendingCustomerOtpRequestId, otp, new BackendClient.JsonCallback() {
             @Override
             public void onSuccess(JSONObject object) {
+                if (!isOtpVerificationActive(generation)) return;
                 String customToken = object.optString("customToken", "");
                 if (TextUtils.isEmpty(customToken)) {
-                    setOtpVerifyLoading(verifyButton, false);
-                    Toast.makeText(MainActivity.this, "OTP verified, but login session was not created.", Toast.LENGTH_LONG).show();
+                    finishOtpVerification(generation);
+                    SafeToast.makeText(MainActivity.this, "OTP verified, but login session was not created.", Toast.LENGTH_LONG).show();
                     return;
                 }
                 if (firebaseAuth == null) firebaseAuth = FirebaseAuth.getInstance();
                 firebaseAuth.signInWithCustomToken(customToken)
                         .addOnSuccessListener(result -> {
+                            if (!finishOtpVerification(generation)) return;
                             if (dialog != null) dialog.dismiss();
                             completeLogin(name, phone);
                         })
                         .addOnFailureListener(error -> {
-                            setOtpVerifyLoading(verifyButton, false);
-                            Toast.makeText(
+                            if (!finishOtpVerification(generation)) return;
+                            SafeToast.makeText(
                                     MainActivity.this,
                                     otpUserError(error == null ? "Firebase login failed" : error.getMessage()),
                                     Toast.LENGTH_LONG
@@ -3300,10 +4332,37 @@ public class MainActivity extends Activity {
 
             @Override
             public void onError(String message) {
-                setOtpVerifyLoading(verifyButton, false);
-                Toast.makeText(MainActivity.this, otpUserError(message), Toast.LENGTH_LONG).show();
+                if (!finishOtpVerification(generation)) return;
+                SafeToast.makeText(MainActivity.this, otpUserError(message), Toast.LENGTH_LONG).show();
             }
         });
+    }
+
+    private boolean isOtpVerificationActive(int generation) {
+        return !activityDestroyed && otpVerificationInFlight && generation == otpVerificationGeneration;
+    }
+
+    private boolean finishOtpVerification(int generation) {
+        if (!isOtpVerificationActive(generation)) return false;
+        if (otpVerificationTimeoutRunnable != null) {
+            carouselHandler.removeCallbacks(otpVerificationTimeoutRunnable);
+            otpVerificationTimeoutRunnable = null;
+        }
+        otpVerificationInFlight = false;
+        setOtpVerifyLoading(activeOtpVerifyButton, false);
+        activeOtpVerifyButton = null;
+        return true;
+    }
+
+    private void cancelOtpVerification() {
+        if (otpVerificationTimeoutRunnable != null) {
+            carouselHandler.removeCallbacks(otpVerificationTimeoutRunnable);
+            otpVerificationTimeoutRunnable = null;
+        }
+        otpVerificationGeneration++;
+        otpVerificationInFlight = false;
+        setOtpVerifyLoading(activeOtpVerifyButton, false);
+        activeOtpVerifyButton = null;
     }
 
     private void setOtpVerifyLoading(View button, boolean loading) {
@@ -3315,7 +4374,9 @@ public class MainActivity extends Activity {
         TextView title = frame.getChildCount() > 0 && frame.getChildAt(0) instanceof TextView
                 ? (TextView) frame.getChildAt(0) : null;
         View arrow = frame.getChildCount() > 1 ? frame.getChildAt(1) : null;
-        if (title != null) title.setText(loading ? "Verifying OTP..." : "Verify OTP");
+        String idleLabel = "otp_verify_proceed".equals(frame.getTag())
+                ? "Verify & Proceed" : "Verify OTP";
+        if (title != null) title.setText(loading ? "Verifying OTP..." : idleLabel);
         if (arrow != null) arrow.setVisibility(loading ? View.INVISIBLE : View.VISIBLE);
         View oldSpinner = frame.findViewWithTag("otp_verify_spinner");
         if (!loading) {
@@ -3383,9 +4444,14 @@ public class MainActivity extends Activity {
     }
 
     private void finishLoginAfterMobileReady(boolean continueWithLocationGate) {
-        Toast.makeText(this, "Welcome to ApnaServo", Toast.LENGTH_SHORT).show();
+        SafeToast.makeText(this, "Welcome to ApnaServo", Toast.LENGTH_SHORT).show();
         showHome();
-        carouselHandler.postDelayed(this::startLoggedInBackgroundSync, 120);
+        carouselHandler.postDelayed(this::startLoggedInBackgroundSync, 420);
+        if (pendingBooking != null && pendingBookingService != null) {
+            bookingSubmissionInFlight = true;
+            pendingBookingAttempts = 0;
+            carouselHandler.postDelayed(this::submitPendingBookingWithRetry, 700);
+        }
         carouselHandler.postDelayed(this::applyPendingAdminDeepLink, 900);
     }
 
@@ -3449,7 +4515,7 @@ public class MainActivity extends Activity {
             String cleanPhone = normalizeCustomerPhoneInput(phoneInput.getText().toString());
             if (!isValidCustomerMobile(cleanPhone)) {
                 phoneInput.requestFocus();
-                Toast.makeText(this, "Please enter a valid 10-digit mobile number.", Toast.LENGTH_SHORT).show();
+                SafeToast.makeText(this, "Please enter a valid 10-digit mobile number.", Toast.LENGTH_SHORT).show();
                 return;
             }
 
@@ -3485,13 +4551,13 @@ public class MainActivity extends Activity {
                         @Override
                         public void onSuccess(JSONObject object) {
                             rememberUserPublicId(object);
-                            Toast.makeText(MainActivity.this, "Mobile number saved", Toast.LENGTH_SHORT).show();
+                            SafeToast.makeText(MainActivity.this, "Mobile number saved", Toast.LENGTH_SHORT).show();
                             finish.run();
                         }
 
                         @Override
                         public void onError(String message) {
-                            Toast.makeText(MainActivity.this, "Number saved securely. It will sync automatically when the network reconnects.", Toast.LENGTH_LONG).show();
+                            SafeToast.makeText(MainActivity.this, "Number saved securely. It will sync automatically when the network reconnects.", Toast.LENGTH_LONG).show();
                             finish.run();
                         }
                     }
@@ -3520,36 +4586,6 @@ public class MainActivity extends Activity {
         dialog.show();
     }
 
-    private GoogleSignInClient buildGoogleSignInClient() {
-        String webClientId = googleWebClientId();
-        GoogleSignInOptions.Builder builder = new GoogleSignInOptions.Builder(GoogleSignInOptions.DEFAULT_SIGN_IN)
-                .requestEmail()
-                .requestProfile();
-        if (!TextUtils.isEmpty(webClientId)) {
-            builder.requestIdToken(webClientId);
-        }
-        return GoogleSignIn.getClient(this, builder.build());
-    }
-
-    private String googleWebClientId() {
-        int resourceId = getResources().getIdentifier("default_web_client_id", "string", getPackageName());
-        if (resourceId == 0) {
-            return "";
-        }
-        return getString(resourceId);
-    }
-
-    private void startGoogleSignIn() {
-        if (TextUtils.isEmpty(googleWebClientId())) {
-            showProfileInfoDialog(
-                    "Google Sign-In Setup",
-                    "Enable the Google sign-in provider in Firebase, add the SHA-1 fingerprint, and replace the user app google-services.json. Google sign-up and sign-in will work after that."
-            );
-            return;
-        }
-        startActivityForResult(googleSignInClient.getSignInIntent(), GOOGLE_SIGN_IN_REQUEST);
-    }
-
     @Override
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
@@ -3561,69 +4597,9 @@ public class MainActivity extends Activity {
             }
             return;
         }
-        if (requestCode == GOOGLE_SIGN_IN_REQUEST) {
-            Task<GoogleSignInAccount> task = GoogleSignIn.getSignedInAccountFromIntent(data);
-            try {
-                GoogleSignInAccount account = task.getResult(ApiException.class);
-                firebaseAuthWithGoogle(account);
-            } catch (ApiException error) {
-                Toast.makeText(this, "Google sign-in cancelled", Toast.LENGTH_SHORT).show();
-            }
-            return;
-        }
         if (requestCode == SUPPORT_CAMERA_REQUEST && resultCode == RESULT_OK) {
             handleSupportCameraResult(data);
         }
-    }
-
-    private void firebaseAuthWithGoogle(GoogleSignInAccount account) {
-        if (account == null || TextUtils.isEmpty(account.getIdToken())) {
-            Toast.makeText(this, "Google account token missing", Toast.LENGTH_SHORT).show();
-            return;
-        }
-        AuthCredential credential = GoogleAuthProvider.getCredential(account.getIdToken(), null);
-        firebaseAuth.signInWithCredential(credential)
-                .addOnSuccessListener(result -> {
-                    String displayName = account.getDisplayName();
-                    if (TextUtils.isEmpty(displayName)) {
-                        displayName = account.getEmail();
-                    }
-                    String email = account.getEmail() == null ? "" : account.getEmail();
-                    saveGoogleCustomer(displayName, email);
-                    Toast.makeText(this, "Google sign-in successful", Toast.LENGTH_SHORT).show();
-                    finishLoginAfterMobileReady(false);
-                })
-                .addOnFailureListener(error -> Toast.makeText(this, "Google sign-in failed", Toast.LENGTH_SHORT).show());
-    }
-
-    private void saveGoogleCustomer(String displayName, String email) {
-        String cleanName = TextUtils.isEmpty(displayName) ? "ApnaServo Customer" : displayName.trim();
-        String cleanEmail = email == null ? "" : email.trim();
-        loggedIn = true;
-        getSharedPreferences(PREFS, MODE_PRIVATE)
-                .edit()
-                .putBoolean("logged_in", true)
-                .apply();
-        putSecureString(KEY_CUSTOMER_NAME, cleanName);
-        putSecureString(KEY_CUSTOMER_EMAIL, cleanEmail);
-    }
-
-    private View googleLoginButton() {
-        LinearLayout button = horizontal();
-        button.setGravity(Gravity.CENTER);
-        button.setPadding(dp(18), 0, dp(18), 0);
-        button.setBackground(stroke(Color.WHITE, Color.rgb(226, 226, 229), dp(12)));
-        button.setElevation(dp(2));
-        addPressAnimation(button);
-
-        ImageView icon = new ImageView(this);
-        icon.setImageResource(R.drawable.ic_google_g);
-        button.addView(icon, margin(26, 26, 0, 0, 18, 0));
-
-        TextView label = text("Continue with Google", 15, BLACK, true);
-        label.setGravity(Gravity.CENTER_VERTICAL);
-        button.addView(label, margin(-2, -1, 0, 0, 0, 0));
-        return button;
     }
 
     private EditText loginInput(String hint, int inputType, int iconRes) {
@@ -3776,7 +4752,7 @@ public class MainActivity extends Activity {
 
         LoginHouseIllustrationView(Activity activity) {
             super(activity);
-            setLayerType(View.LAYER_TYPE_SOFTWARE, null);
+            setLayerType(View.LAYER_TYPE_NONE, null);
         }
 
         @Override
@@ -4023,6 +4999,65 @@ public class MainActivity extends Activity {
                 || "laundry".equals(id);
     }
 
+    private void showServiceHighDemand(Service service) {
+        if (isFinishing() || isDestroyed()) return;
+        if (serviceAvailabilityDialog != null && serviceAvailabilityDialog.isShowing()) return;
+        final String serviceName = service == null || TextUtils.isEmpty(service.getName())
+                ? "this service" : service.getName();
+        AppControlConfig.ServiceRule rule = service == null ? AppControlConfig.ServiceRule.AVAILABLE
+                : appControl.serviceRule(service.getId(), service.getCategory(), service.getName());
+        String message = TextUtils.isEmpty(rule.message)
+                ? "We are currently receiving a high number of requests for this service.\n\nPlease try another service or try again after some time."
+                : rule.message;
+
+        AlertDialog dialog = new AlertDialog.Builder(this).create();
+        serviceAvailabilityDialog = dialog;
+        dialog.setCanceledOnTouchOutside(true);
+        dialog.setOnDismissListener(ignored -> {
+            if (serviceAvailabilityDialog == dialog) serviceAvailabilityDialog = null;
+        });
+        LinearLayout card = vertical();
+        card.setGravity(Gravity.CENTER_HORIZONTAL);
+        card.setPadding(dp(28), dp(28), dp(28), dp(28));
+        card.setBackground(round(Color.WHITE, dp(30)));
+
+        ImageView artwork = new ImageView(this);
+        artwork.setImageResource(R.drawable.app_status_high_demand);
+        artwork.setScaleType(ImageView.ScaleType.CENTER_INSIDE);
+        card.addView(artwork, new LinearLayout.LayoutParams(-1, dp(190)));
+        TextView heading = text("High demand for\nthis service", 27, Color.rgb(24, 31, 45), true);
+        heading.setGravity(Gravity.CENTER);
+        heading.setLineSpacing(dp(2), 1f);
+        card.addView(heading, margin(-1, -2, 0, 12, 0, 0));
+        TextView body = text(message, 16, Color.rgb(74, 80, 96), false);
+        body.setGravity(Gravity.CENTER);
+        body.setLineSpacing(dp(4), 1f);
+        card.addView(body, margin(-1, -2, 0, 0, 0, 20));
+        TextView serviceLabel = text(serviceName, 12, BOOKING_THEME, true);
+        serviceLabel.setGravity(Gravity.CENTER);
+        serviceLabel.setBackground(round(Color.rgb(255, 240, 244), dp(10)));
+        card.addView(serviceLabel, margin(-1, 34, 0, 0, 0, 20));
+        TextView divider = text("────  •  ────", 14, Color.rgb(246, 163, 180), true);
+        divider.setGravity(Gravity.CENTER);
+        card.addView(divider, margin(-1, -2, 0, 0, 0, 20));
+        TextView action = orangeButton("Okay, Got It");
+        action.setOnClickListener(view -> {
+            dialog.dismiss();
+            showHome();
+        });
+        card.addView(action, new LinearLayout.LayoutParams(-1, dp(58)));
+        dialog.setView(card);
+        dialog.setOnShowListener(ignored -> {
+            Window window = dialog.getWindow();
+            if (window == null) return;
+            window.setBackgroundDrawable(new ColorDrawable(Color.TRANSPARENT));
+            window.setDimAmount(0.72f);
+            window.addFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND);
+            window.setLayout((int) (getResources().getDisplayMetrics().widthPixels * 0.90f), WindowManager.LayoutParams.WRAP_CONTENT);
+        });
+        dialog.show();
+    }
+
     private void showServicePreparing(Service service) {
         setCurrentScreen("service_preparing");
         showAppChrome();
@@ -4161,29 +5196,39 @@ public class MainActivity extends Activity {
 
     private boolean requireFeature(String featureId, String label) {
         if (featureEnabled(featureId)) return true;
-        Toast.makeText(this, label + " is temporarily unavailable.", Toast.LENGTH_SHORT).show();
+        SafeToast.makeText(this, label + " is temporarily unavailable.", Toast.LENGTH_SHORT).show();
         return false;
     }
 
     private void showBooking(Service service) {
         if (!requireFeature(FeatureRegistry.SERVICE_BOOKING, "Service booking")) return;
         if (service == null) {
-            Toast.makeText(this, "Service is unavailable. Please refresh and try again.", Toast.LENGTH_SHORT).show();
+            SafeToast.makeText(this, "Service is unavailable. Please refresh and try again.", Toast.LENGTH_SHORT).show();
             return;
         }
+        // Record the actual customer intent before any availability check. This
+        // includes Preparing/High Demand services, which are exactly the
+        // clicks Admin needs to see despite not becoming a booking.
+        backendClient.trackServiceClick(currentScreen, service.getId(), service.getName(), service.getCategory());
         AppControlConfig.ServiceRule controlRule = appControl.serviceRule(
                 service.getId(), service.getCategory(), service.getName());
         if (appControl.blocksBooking()) {
             showGlobalAppStatus();
             return;
         }
-        if (!controlRule.bookable() || !isCurrentlyBookableService(service.getId())) {
-            showServicePreparing(service);
+        // The server enforces this too, but stop the customer before opening a
+        // booking form that cannot be submitted outside the published window.
+        if (!appControl.operatingHours.isOpenNow()) {
+            showBookingHoursUnavailable();
             return;
         }
         if (controlRule.status == AppControlConfig.ServiceStatus.HIGH_DEMAND) {
-            Toast.makeText(this, TextUtils.isEmpty(controlRule.message)
-                    ? "High demand: booking confirmation may take longer." : controlRule.message, Toast.LENGTH_LONG).show();
+            showServiceHighDemand(service);
+            return;
+        }
+        if (!controlRule.bookable() || !isCurrentlyBookableService(service.getId())) {
+            showServicePreparing(service);
+            return;
         }
         if (bookingLaunchCheckInFlight) {
             return;
@@ -4204,6 +5249,53 @@ public class MainActivity extends Activity {
         });
     }
 
+    private void showBookingHoursUnavailable() {
+        AppControlConfig.OperatingHours hours = appControl.operatingHours;
+        String message = TextUtils.isEmpty(hours.closedMessage)
+                ? "We are unavailable right now. Please try again during service hours."
+                : hours.closedMessage;
+        String title = TextUtils.isEmpty(hours.closedTitle) ? "We're currently unavailable" : hours.closedTitle;
+        String button = TextUtils.isEmpty(hours.closedButtonText) ? "Got it" : hours.closedButtonText;
+        AlertDialog dialog = new AlertDialog.Builder(this).create();
+        LinearLayout sheet = vertical();
+        sheet.setPadding(dp(22), dp(22), dp(22), dp(18));
+        sheet.setBackground(bookingOuterDrawable());
+        LinearLayout iconRow = horizontal();
+        iconRow.setGravity(Gravity.CENTER_VERTICAL);
+        TextView icon = text("◷", 25, BOOKING_THEME, true);
+        icon.setGravity(Gravity.CENTER);
+        icon.setBackground(round(Color.rgb(255, 232, 239), dp(25)));
+        iconRow.addView(icon, new LinearLayout.LayoutParams(dp(50), dp(50)));
+        LinearLayout copy = vertical();
+        copy.setPadding(dp(12), 0, 0, 0);
+        copy.addView(text(title, 18, BLACK, true));
+        copy.addView(text("Service hours", 10, BOOKING_THEME, true), margin(-1, -2, 0, 3, 0, 0));
+        iconRow.addView(copy, new LinearLayout.LayoutParams(0, -2, 1));
+        sheet.addView(iconRow);
+        TextView body = text(message, 13, MUTED, false);
+        body.setLineSpacing(dp(2), 1f);
+        sheet.addView(body, margin(-1, -2, 0, 16, 0, 14));
+        View divider = new View(this);
+        divider.setBackgroundColor(Color.rgb(242, 220, 226));
+        sheet.addView(divider, new LinearLayout.LayoutParams(-1, dp(1)));
+        TextView action = text(button + "  ›", 13, Color.WHITE, true);
+        action.setGravity(Gravity.CENTER);
+        action.setBackground(round(BOOKING_THEME, dp(14)));
+        action.setPadding(dp(16), dp(12), dp(16), dp(12));
+        action.setOnClickListener(view -> dialog.dismiss());
+        addPressAnimation(action);
+        sheet.addView(action, margin(-1, 48, 0, 14, 0, 0));
+        dialog.setView(sheet);
+        dialog.setOnShowListener(ignored -> {
+            Window window = dialog.getWindow();
+            if (window != null) {
+                window.setBackgroundDrawable(new ColorDrawable(Color.TRANSPARENT));
+                window.setLayout((int) (getResources().getDisplayMetrics().widthPixels * .88f), WindowManager.LayoutParams.WRAP_CONTENT);
+            }
+        });
+        dialog.show();
+    }
+
     private void openBookingDestinationSafely(Service service, boolean bookingOpen, String launchDateLabel) {
         try {
             if (bookingOpen) {
@@ -4215,7 +5307,7 @@ public class MainActivity extends Activity {
         } catch (RuntimeException error) {
             Log.e(BOOKING_LOG, "Unable to open service: " + service.getId(), error);
             bookingLaunchCheckInFlight = false;
-            Toast.makeText(this, "Couldn't open this service. Please try again.", Toast.LENGTH_LONG).show();
+            SafeToast.makeText(this, "Couldn't open this service. Please try again.", Toast.LENGTH_LONG).show();
             showHome();
         }
     }
@@ -4226,10 +5318,14 @@ public class MainActivity extends Activity {
         floatingFooter.setVisibility(View.GONE);
         bottomNav.setVisibility(View.GONE);
         selectedService = service;
+        bookingAreaUnavailable = false;
+        bookingAreaValidationInFlight = false;
+        bookingAreaValidationGeneration++;
         selectedServiceTier = "Normal";
         selectedLaundryServiceType = "Wash & Fold";
         selectedLaundryItems.clear();
         selectedCleaningType = "Home Cleaning";
+        selectedCleaningPricingOptionId = "";
         selectedApplianceType = "Fridge Repair";
         problemInput = null;
         addressInput = null;
@@ -4252,6 +5348,7 @@ public class MainActivity extends Activity {
         serviceMiniMapPin = null;
         serviceMiniMapLabel = null;
         bookingForm = null;
+        remoteBookingInputs.clear();
         dateValueView = null;
         timeValueView = null;
         problemCounter = null;
@@ -4281,9 +5378,12 @@ public class MainActivity extends Activity {
             addLaundryBookingOptions();
         } else if ("cleaning".equals(service.getId())) {
             addCleaningBookingOptions();
+            addRemoteCleaningPricing(service);
+            addRemoteBookingPages(service);
         } else if ("appliances".equals(service.getId())) {
             addApplianceBookingOptions();
         }
+        addRemoteBookingFields(service);
         addBookingAddressPanel(service);
         addBookingContinueButton(service);
     }
@@ -4437,31 +5537,33 @@ public class MainActivity extends Activity {
         backendClient.requestLaunchNotification(new BackendClient.JsonCallback() {
             @Override public void onSuccess(JSONObject object) {
                 button.setText("✓  We'll Notify You");
-                Toast.makeText(MainActivity.this, "Launch notification enabled", Toast.LENGTH_SHORT).show();
+                SafeToast.makeText(MainActivity.this, "Launch notification enabled", Toast.LENGTH_SHORT).show();
             }
 
             @Override public void onError(String message) {
                 button.setEnabled(true);
                 button.setText("♧  Notify Me on Launch");
-                Toast.makeText(MainActivity.this, NetworkError.body(NetworkError.safe(message)), Toast.LENGTH_LONG).show();
+                SafeToast.makeText(MainActivity.this, NetworkError.body(NetworkError.safe(message)), Toast.LENGTH_LONG).show();
             }
         });
     }
 
     private void showBookingsList() {
         if (!featureEnabled(FeatureRegistry.BOOKING_HISTORY)) {
-            Toast.makeText(this, "Booking history is temporarily unavailable.", Toast.LENGTH_SHORT).show();
+            SafeToast.makeText(this, "Booking history is temporarily unavailable.", Toast.LENGTH_SHORT).show();
             showHome();
             return;
         }
         if (!"all".equals(bookingHistoryFilter)
-                && !"pending".equals(bookingHistoryFilter)
-                && !"past".equals(bookingHistoryFilter)) {
+                && !"present".equals(bookingHistoryFilter)
+                && !"past".equals(bookingHistoryFilter)
+                && !"cancelled".equals(bookingHistoryFilter)) {
             bookingHistoryFilter = "all";
         }
         setCurrentScreen("bookings");
         showAppChrome();
         setActiveNav(navBookings);
+        bottomNav.setElevation(0f);
         resetScreen();
         floatingFooter.setVisibility(View.GONE);
         screenContent.setBackgroundColor(Color.rgb(253, 250, 246));
@@ -4472,17 +5574,42 @@ public class MainActivity extends Activity {
         List<Booking> allBookings = bookingHistoryForDisplay();
         syncBookingListStatuses(allBookings);
         addBookingsListTopBar(allBookings);
-        screenContent.addView(bookingHistoryFilterBar(), margin(-1, 48, 22, 12, 22, 22));
+        screenContent.addView(bookingHistoryFilterBar(allBookings), margin(-1, 48, 0, 2, 0, 12));
 
         List<Booking> bookings = filteredBookingHistory(allBookings);
+        // Keep actionable bookings above history even when the API returns
+        // records in an older or inconsistent order.
+        if ("all".equals(bookingHistoryFilter)) {
+            Collections.sort(bookings, (left, right) -> Integer.compare(
+                    bookingHistoryDisplayPriority(left), bookingHistoryDisplayPriority(right)));
+        }
 
         LinearLayout list = vertical();
         list.setPadding(dp(18), 0, dp(18), dp(112));
         if (bookings.isEmpty()) {
             list.addView(bookingsHistoryEmptyStateView(), margin(-1, -2, 0, 0, 0, 6));
         } else {
-            for (int index = 0; index < bookings.size(); index++) {
-                list.addView(myBookingsReferenceCard(bookings.get(index)), margin(-1, -2, 0, 0, 0, 16));
+            boolean liveCardAdded = false;
+            int visibleCount = Math.min(bookings.size(), bookingHistoryVisibleLimit);
+            for (int index = 0; index < visibleCount; index++) {
+                Booking booking = bookings.get(index);
+                boolean live = !liveCardAdded && isPresentBookingStatus(bookingStatusFor(booking));
+                if (live) liveCardAdded = true;
+                list.addView(live ? myBookingsLiveCard(booking) : myBookingsReferenceCard(booking),
+                         margin(-1, -2, 0, 0, 0, 14));
+            }
+            if (visibleCount < bookings.size()) {
+                int remaining = bookings.size() - visibleCount;
+                TextView loadMore = text("Load older bookings (" + remaining + ")", 12, BOOKING_THEME, true);
+                loadMore.setGravity(Gravity.CENTER);
+                loadMore.setBackground(stroke(Color.WHITE, Color.rgb(226, 226, 230), dp(18)));
+                loadMore.setElevation(0f);
+                loadMore.setOnClickListener(view -> {
+                    bookingHistoryVisibleLimit += 12;
+                    showBookingsList();
+                });
+                addPressAnimation(loadMore);
+                list.addView(loadMore, margin(-1, 44, 18, 2, 18, 16));
             }
         }
         screenContent.addView(list, margin(-1, -2, 0, 0, 0, 0));
@@ -4497,6 +5624,7 @@ public class MainActivity extends Activity {
             @Override
             public void onSuccess(JSONObject object) {
                 bookingHistoryRefreshInFlight = false;
+                dismissBookingsLoading();
                 lastBookingHistoryRefreshAt = System.currentTimeMillis();
                 JSONArray array = bookingArrayFromResponse(object);
                 if (array == null) {
@@ -4521,7 +5649,13 @@ public class MainActivity extends Activity {
                     } catch (Exception ignored) {
                     }
                 }
-                List<Booking> merged = new ArrayList<>(remoteBookings);
+                // A temporarily empty/partial response must never erase history
+                // already confirmed and cached on this device. Remote records win
+                // by ID (fresh status), while valid local records remain available
+                // until the backend returns the complete account history again.
+                List<Booking> localBookings = mergeBookingHistory(
+                        bookingStore.load(), stableBookingHistory);
+                List<Booking> merged = mergeBookingHistory(remoteBookings, localBookings);
                 if (pendingBooking != null && !TextUtils.isEmpty(pendingBooking.getId())) {
                     merged = mergeBookingHistory(merged, Collections.singletonList(pendingBooking));
                 }
@@ -4545,6 +5679,7 @@ public class MainActivity extends Activity {
             @Override
             public void onError(String message) {
                 bookingHistoryRefreshInFlight = false;
+                dismissBookingsLoading();
                 lastBookingHistoryRefreshAt = System.currentTimeMillis();
                 if (rerender && "bookings".equals(currentScreen)) {
                     showBookingsList();
@@ -4553,29 +5688,40 @@ public class MainActivity extends Activity {
         });
     }
 
-    private View bookingHistoryFilterBar() {
+    private View bookingHistoryFilterBar(List<Booking> bookings) {
+        android.widget.HorizontalScrollView scroller = new android.widget.HorizontalScrollView(this);
+        scroller.setHorizontalScrollBarEnabled(false);
+        scroller.setOverScrollMode(View.OVER_SCROLL_NEVER);
+        scroller.setFillViewport(false);
         LinearLayout row = horizontal();
+        row.setPadding(dp(18), 0, dp(18), 0);
+        int total = bookings == null ? 0 : bookings.size();
         String[][] filters = {
-                {"all", "All"},
-                {"pending", "Pending"},
-                {"past", "Completed"}
+                {"all", "All (" + total + ")"},
+                {"present", "In Progress"},
+                {"past", "Completed"},
+                {"cancelled", "Cancelled"}
         };
         for (String[] filter : filters) {
             boolean selected = filter[0].equals(bookingHistoryFilter);
-            TextView chip = text(filter[1], 13, selected ? Color.WHITE : Color.rgb(76, 72, 70), selected);
+            TextView chip = text(filter[1], 12, selected ? Color.WHITE : Color.rgb(72, 84, 105), selected);
             chip.setGravity(Gravity.CENTER);
             chip.setSingleLine(true);
-            chip.setBackground(selected ? bookingHistorySelectedFilterDrawable() : stroke(Color.rgb(255, 253, 250), Color.rgb(226, 215, 207), dp(24)));
-            chip.setElevation(selected ? dp(5) : dp(1));
+            chip.setBackground(selected ? bookingHistorySelectedFilterDrawable()
+                    : stroke(Color.WHITE, Color.rgb(226, 226, 230), dp(22)));
+            chip.setElevation(0f);
             chip.setOnClickListener(view -> {
                 bookingHistoryFilter = filter[0];
+                bookingHistoryVisibleLimit = 12;
                 showBookingsList();
             });
-            LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(0, dp(48), 1);
-            params.setMargins(dp(5), 0, dp(5), 0);
+            int chipWidth = "present".equals(filter[0]) ? 112 : "all".equals(filter[0]) ? 88 : 108;
+            LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(dp(chipWidth), dp(40));
+            params.setMargins(0, 0, dp(8), 0);
             row.addView(chip, params);
         }
-        return row;
+        scroller.addView(row, new android.widget.HorizontalScrollView.LayoutParams(-2, -1));
+        return scroller;
     }
 
     private List<Booking> filteredBookingHistory(List<Booking> bookings) {
@@ -4590,6 +5736,15 @@ public class MainActivity extends Activity {
             if (matches) filtered.add(booking);
         }
         return filtered;
+    }
+
+    private int bookingHistoryDisplayPriority(Booking booking) {
+        String status = bookingStatusFor(booking);
+        if (isPresentBookingStatus(status)) return 0;
+        if (isPendingBookingStatus(status)) return 1;
+        if (isPastBookingStatus(status)) return 2;
+        if (isCancelledHistoryStatus(status)) return 3;
+        return 4;
     }
 
     private JSONArray bookingArrayFromResponse(JSONObject object) {
@@ -4626,8 +5781,8 @@ public class MainActivity extends Activity {
         bookingLatitudeCache.put(code, item.optDouble("lat", serviceLat));
         bookingLongitudeCache.put(code, item.optDouble("lng", serviceLng));
         applyBookingListStatus(code, item.optString("status", booking.getStatus()), "", 0);
-        String partnerName = item.optString("partnerName", "");
-        String partnerPhone = item.optString("partnerPhone", "");
+        String partnerName = item.optString("serviceContactName", item.optString("partnerName", ""));
+        String partnerPhone = item.optString("serviceContactPhone", item.optString("partnerPhone", ""));
         JSONObject snapshot = item.optJSONObject("partnerSnapshot");
         if (snapshot != null) {
             if (TextUtils.isEmpty(partnerName)) partnerName = snapshot.optString("name", "");
@@ -4635,6 +5790,7 @@ public class MainActivity extends Activity {
         }
         if (!TextUtils.isEmpty(partnerName)) bookingPartnerNameCache.put(code, partnerName.trim());
         if (!TextUtils.isEmpty(partnerPhone)) bookingPartnerPhoneCache.put(code, partnerPhone.trim());
+        bookingServiceContactRoleCache.put(code, item.optString("serviceContactRole", "partner_owner"));
         rememberPartnerRating(code, item);
         rememberPartnerPhoto(code, item);
     }
@@ -4657,10 +5813,12 @@ public class MainActivity extends Activity {
             return new ArrayList<>();
         }
         List<Booking> transientBookings = new ArrayList<>();
-        if (pendingBooking != null && !TextUtils.isEmpty(pendingBooking.getId())) {
+        if (pendingBooking != null && !TextUtils.isEmpty(pendingBooking.getId())
+                && !isClientBookingRequestId(pendingBooking.getId())) {
             transientBookings.add(pendingBooking.withStatus(bookingStatusFor(pendingBooking)));
         }
-        if (latestBooking != null && !TextUtils.isEmpty(latestBooking.getId())) {
+        if (latestBooking != null && !TextUtils.isEmpty(latestBooking.getId())
+                && !isClientBookingRequestId(latestBooking.getId())) {
             latestBooking = latestBooking.withStatus(bookingStatusFor(latestBooking));
             bookingStore.save(latestBooking);
             transientBookings.add(latestBooking);
@@ -4694,7 +5852,7 @@ public class MainActivity extends Activity {
             return;
         }
         for (Booking booking : source) {
-            if (booking == null || TextUtils.isEmpty(booking.getId())) {
+            if (booking == null || TextUtils.isEmpty(booking.getId()) || isClientBookingRequestId(booking.getId())) {
                 continue;
             }
             String key = booking.getId().trim();
@@ -4704,6 +5862,22 @@ public class MainActivity extends Activity {
             seen.put(key, true);
             destination.add(booking);
         }
+    }
+
+    private boolean isClientBookingRequestId(String bookingId) {
+        if (TextUtils.isEmpty(bookingId)) {
+            return false;
+        }
+        String value = bookingId.trim().toUpperCase(Locale.US);
+        return value.startsWith("LOCAL-") || value.startsWith("REQ-");
+    }
+
+    private boolean isCanonicalBookingCode(String bookingId) {
+        if (TextUtils.isEmpty(bookingId)) {
+            return false;
+        }
+        return bookingId.trim().toUpperCase(Locale.US)
+                .matches("^(?:ASB-\\d{8}-[A-Z0-9]{8}|ASB\\d{5}|ASB-\\d{6,})$");
     }
 
     private void sortBookingHistoryNewestFirst(List<Booking> bookings) {
@@ -4735,7 +5909,9 @@ public class MainActivity extends Activity {
         String value = normalizeRemoteStatus(status);
         return "cancelled".equals(value)
                 || "rejected".equals(value)
-                || "customer_no_response".equals(value);
+                || "customer_no_response".equals(value)
+                || "expired".equals(value)
+                || "request_expired".equals(value);
     }
 
     private boolean isPresentBookingStatus(String status) {
@@ -4839,6 +6015,8 @@ public class MainActivity extends Activity {
         TextView cancel = text("Cancel Booking", 15, Color.RED, true);
         cancel.setGravity(Gravity.CENTER);
         cancel.setBackground(stroke(Color.WHITE, Color.rgb(255, 120, 120), dp(14)));
+        cancel.setOnClickListener(view -> cancelCustomerBooking(null));
+        addPressAnimation(cancel);
         screenContent.addView(cancel, margin(-1, 48, 20, 0, 20, 24));
     }
 
@@ -4926,6 +6104,7 @@ public class MainActivity extends Activity {
 
     private void renderBookingSuccessSplash() {
         String id = bookingDisplayId();
+        boolean reducedEffects = isConstrainedDevice();
         bookingSuccessSplashShownForId = id;
         mainScroll.setFillViewport(true);
         screenContent.setPadding(0, 0, 0, 0);
@@ -4961,18 +6140,25 @@ public class MainActivity extends Activity {
         page.addView(wrap, wrapParams);
         screenContent.addView(page, new LinearLayout.LayoutParams(-1, -1));
 
-        celebration.setScaleX(0.76f);
-        celebration.setScaleY(0.76f);
-        celebration.setAlpha(0f);
-        celebration.animate().alpha(1f).scaleX(1f).scaleY(1f).setDuration(540)
-                .setInterpolator(new AccelerateDecelerateInterpolator()).start();
-        title.setAlpha(0f);
-        subtitle.setAlpha(0f);
-        title.animate().alpha(1f).translationY(0f).setStartDelay(220L).setDuration(360L).start();
-        subtitle.animate().alpha(1f).setStartDelay(330L).setDuration(360L).start();
+        if (!reducedEffects) {
+            celebration.setScaleX(0.76f);
+            celebration.setScaleY(0.76f);
+            celebration.setAlpha(0f);
+            celebration.animate().alpha(1f).scaleX(1f).scaleY(1f).setDuration(540)
+                    .setInterpolator(new AccelerateDecelerateInterpolator()).start();
+            title.setAlpha(0f);
+            subtitle.setAlpha(0f);
+            title.animate().alpha(1f).translationY(0f).setStartDelay(220L).setDuration(360L).start();
+            subtitle.animate().alpha(1f).setStartDelay(330L).setDuration(360L).start();
+        }
 
         carouselHandler.postDelayed(() -> {
             if (!"booking_confirmed".equals(currentScreen) || latestBooking == null || !id.equals(bookingDisplayId())) {
+                return;
+            }
+            if (reducedEffects) {
+                resetScreen();
+                renderBookingFlowContent(false);
                 return;
             }
             ObjectAnimator scaleX = ObjectAnimator.ofFloat(page, View.SCALE_X, 1f, 0.9f);
@@ -4994,7 +6180,7 @@ public class MainActivity extends Activity {
                 }
             });
             set.start();
-        }, 1700L);
+        }, reducedEffects ? 1100L : 1700L);
     }
 
     private FrameLayout bookingSuccessCelebration() {
@@ -5146,7 +6332,7 @@ public class MainActivity extends Activity {
         card.setGravity(Gravity.CENTER_VERTICAL);
         card.setPadding(dp(14), dp(11), dp(14), dp(11));
         card.setBackground(stroke(Color.WHITE, Color.rgb(247, 222, 228), dp(14)));
-        card.setElevation(dp(3));
+        card.setElevation(0f);
         card.addView(new BookingFindingArtworkView(BookingFindingArtworkView.RADAR_SIGNAL),
                 new LinearLayout.LayoutParams(dp(34), dp(34)));
         LinearLayout copy = vertical();
@@ -5284,7 +6470,7 @@ public class MainActivity extends Activity {
             if (clipboard != null) {
                 clipboard.setPrimaryClip(ClipData.newPlainText("Booking ID", bookingDisplayId()));
             }
-            Toast.makeText(this, "Booking ID copied", Toast.LENGTH_SHORT).show();
+            SafeToast.makeText(this, "Booking ID copied", Toast.LENGTH_SHORT).show();
         });
         addPressAnimation(copy);
         heading.addView(copy, new LinearLayout.LayoutParams(dp(76), dp(40)));
@@ -5386,6 +6572,7 @@ public class MainActivity extends Activity {
         private static final int RADAR_SIGNAL = 18;
         private static final int PICKUP_BAG = 19;
         private static final int HOME = 20;
+        private static final int ARRIVED = 21;
         private static final int NO_TINT = Integer.MIN_VALUE;
         private final int artwork;
         private final int tintColor;
@@ -5408,7 +6595,10 @@ public class MainActivity extends Activity {
         @Override
         protected void onAttachedToWindow() {
             super.onAttachedToWindow();
-            if ((artwork != HERO && artwork != LAUNDRY_RADAR && artwork != SCOOTER && artwork != TOOLS) || radarAnimator != null) return;
+            // The finding radar is core progress feedback, including on low-memory phones.
+            // It is a single bounded animator and is cancelled as soon as the view detaches.
+            if ((artwork != HERO && artwork != LAUNDRY_RADAR && artwork != SCOOTER && artwork != TOOLS)
+                    || radarAnimator != null) return;
             radarAnimator = ValueAnimator.ofFloat(0f, 360f);
             radarAnimator.setDuration(2600L);
             radarAnimator.setRepeatCount(ValueAnimator.INFINITE);
@@ -5442,6 +6632,7 @@ public class MainActivity extends Activity {
             else if (artwork == PARTNER_AVATAR) drawPartnerAvatar(canvas, w, h);
             else if (artwork == SCOOTER) drawScooterBadge(canvas, w, h);
             else if (artwork == TOOLS) drawToolsBadge(canvas, w, h);
+            else if (artwork == ARRIVED) drawArrivedBadge(canvas, w, h);
             else drawLineIcon(canvas, w, h, artwork);
         }
 
@@ -5753,38 +6944,52 @@ public class MainActivity extends Activity {
             float base = Math.min(w, h);
             float cx = w * .50f;
             float cy = h * .50f;
-            drawStatusBadgeShell(canvas, w, h, cx, cy, base);
+            drawPaleStatusShell(canvas, cx, cy, base);
 
             paint.setShader(null);
             paint.setStyle(Paint.Style.FILL);
-            paint.setColor(Color.WHITE);
-            canvas.drawCircle(cx - base * .095f, cy + base * .115f, base * .045f, paint);
-            canvas.drawCircle(cx + base * .145f, cy + base * .115f, base * .045f, paint);
-            canvas.drawRoundRect(new RectF(cx - base * .17f, cy + base * .005f,
-                    cx + base * .18f, cy + base * .095f), base * .04f, base * .04f, paint);
+            paint.setColor(Color.rgb(55, 57, 63));
+            canvas.drawCircle(cx - base * .19f, cy + base * .17f, base * .095f, paint);
+            canvas.drawCircle(cx + base * .18f, cy + base * .17f, base * .095f, paint);
+            paint.setColor(Color.rgb(240, 240, 242));
+            canvas.drawCircle(cx - base * .19f, cy + base * .17f, base * .050f, paint);
+            canvas.drawCircle(cx + base * .18f, cy + base * .17f, base * .050f, paint);
+
+            paint.setShader(new LinearGradient(cx - base * .30f, cy, cx + base * .30f, cy,
+                    Color.rgb(255, 69, 113), Color.rgb(204, 17, 65), Shader.TileMode.CLAMP));
+            canvas.drawRoundRect(new RectF(cx - base * .29f, cy - base * .01f,
+                    cx + base * .29f, cy + base * .17f), base * .07f, base * .07f, paint);
             path.reset();
-            path.moveTo(cx + base * .03f, cy + base * .005f);
-            path.lineTo(cx + base * .17f, cy - base * .085f);
-            path.lineTo(cx + base * .23f, cy - base * .055f);
-            path.lineTo(cx + base * .13f, cy + base * .035f);
+            path.moveTo(cx - base * .29f, cy + base * .08f);
+            path.lineTo(cx - base * .25f, cy - base * .20f);
+            path.lineTo(cx - base * .10f, cy - base * .16f);
+            path.lineTo(cx - base * .08f, cy + base * .08f);
             path.close();
             canvas.drawPath(path, paint);
+            paint.setShader(null);
 
             paint.setColor(Color.rgb(249, 185, 117));
-            canvas.drawCircle(cx - base * .035f, cy - base * .145f, base * .050f, paint);
-            paint.setColor(Color.WHITE);
-            canvas.drawRoundRect(new RectF(cx - base * .095f, cy - base * .095f,
-                    cx + base * .055f, cy + base * .030f), base * .035f, base * .035f, paint);
-            paint.setColor(LOGIN_ROSE_DARK);
-            canvas.drawArc(new RectF(cx - base * .095f, cy - base * .205f,
-                    cx + base * .060f, cy - base * .105f), 180, 180, true, paint);
+            canvas.drawCircle(cx - base * .015f, cy - base * .20f, base * .062f, paint);
+            paint.setColor(Color.rgb(247, 48, 98));
+            canvas.drawRoundRect(new RectF(cx - base * .085f, cy - base * .14f,
+                    cx + base * .055f, cy + base * .03f), base * .035f, base * .035f, paint);
+            canvas.drawArc(new RectF(cx - base * .090f, cy - base * .285f,
+                    cx + base * .060f, cy - base * .165f), 180, 180, true, paint);
 
+            paint.setColor(Color.rgb(222, 28, 75));
+            canvas.drawRoundRect(new RectF(cx + base * .12f, cy - base * .14f,
+                    cx + base * .34f, cy + base * .04f), base * .025f, base * .025f, paint);
             paint.setStyle(Paint.Style.STROKE);
-            paint.setColor(Color.WHITE);
-            paint.setStrokeWidth(base * .028f);
+            paint.setStrokeWidth(base * .020f);
             paint.setStrokeCap(Paint.Cap.ROUND);
-            canvas.drawLine(cx - base * .015f, cy - base * .035f, cx + base * .095f, cy + base * .028f, paint);
-            canvas.drawLine(cx - base * .005f, cy + base * .020f, cx - base * .100f, cy + base * .112f, paint);
+            paint.setColor(Color.WHITE);
+            canvas.drawLine(cx + base * .20f, cy - base * .09f, cx + base * .29f, cy - base * .01f, paint);
+            canvas.drawLine(cx + base * .29f, cy - base * .09f, cx + base * .20f, cy - base * .01f, paint);
+
+            paint.setStrokeWidth(base * .028f);
+            paint.setColor(Color.rgb(38, 39, 44));
+            canvas.drawLine(cx - base * .01f, cy - base * .08f, cx - base * .18f, cy - base * .02f, paint);
+            canvas.drawLine(cx + base * .01f, cy + base * .01f, cx - base * .08f, cy + base * .14f, paint);
             paint.setStrokeCap(Paint.Cap.BUTT);
         }
 
@@ -5792,14 +6997,14 @@ public class MainActivity extends Activity {
             float base = Math.min(w, h);
             float cx = w * .50f;
             float cy = h * .50f;
-            drawStatusBadgeShell(canvas, w, h, cx, cy, base);
+            drawPaleStatusShell(canvas, cx, cy, base);
 
             paint.setShader(null);
             paint.setStyle(Paint.Style.STROKE);
             paint.setStrokeCap(Paint.Cap.ROUND);
             paint.setStrokeJoin(Paint.Join.ROUND);
             paint.setStrokeWidth(base * .052f);
-            paint.setColor(Color.WHITE);
+            paint.setColor(BOOKING_THEME);
             canvas.drawLine(cx - base * .135f, cy + base * .120f, cx + base * .125f, cy - base * .140f, paint);
             canvas.drawLine(cx - base * .125f, cy - base * .135f, cx + base * .140f, cy + base * .130f, paint);
 
@@ -5811,6 +7016,55 @@ public class MainActivity extends Activity {
             canvas.drawCircle(cx - base * .145f, cy + base * .145f, base * .045f, paint);
             canvas.drawCircle(cx + base * .145f, cy + base * .145f, base * .045f, paint);
             paint.setStrokeCap(Paint.Cap.BUTT);
+        }
+
+        private void drawArrivedBadge(Canvas canvas, float w, float h) {
+            float base = Math.min(w, h);
+            float cx = w * .50f;
+            float cy = h * .47f;
+            drawPaleStatusShell(canvas, cx, cy, base);
+
+            paint.setShader(new LinearGradient(cx, cy - base * .29f, cx, cy + base * .29f,
+                    Color.rgb(255, 65, 111), Color.rgb(214, 21, 70), Shader.TileMode.CLAMP));
+            paint.setStyle(Paint.Style.FILL);
+            path.reset();
+            path.moveTo(cx, cy + base * .31f);
+            path.cubicTo(cx - base * .28f, cy + base * .03f, cx - base * .26f, cy - base * .25f, cx, cy - base * .28f);
+            path.cubicTo(cx + base * .26f, cy - base * .25f, cx + base * .28f, cy + base * .03f, cx, cy + base * .31f);
+            path.close();
+            canvas.drawPath(path, paint);
+            paint.setShader(null);
+            paint.setColor(Color.WHITE);
+            canvas.drawCircle(cx, cy - base * .04f, base * .105f, paint);
+            paint.setColor(BOOKING_THEME);
+            canvas.drawCircle(cx, cy - base * .04f, base * .043f, paint);
+
+            float checkCx = cx + base * .27f;
+            float checkCy = cy + base * .23f;
+            paint.setColor(Color.rgb(0, 164, 74));
+            canvas.drawCircle(checkCx, checkCy, base * .145f, paint);
+            paint.setStyle(Paint.Style.STROKE);
+            paint.setStrokeWidth(base * .045f);
+            paint.setStrokeCap(Paint.Cap.ROUND);
+            paint.setStrokeJoin(Paint.Join.ROUND);
+            paint.setColor(Color.WHITE);
+            path.reset();
+            path.moveTo(checkCx - base * .065f, checkCy);
+            path.lineTo(checkCx - base * .015f, checkCy + base * .055f);
+            path.lineTo(checkCx + base * .080f, checkCy - base * .065f);
+            canvas.drawPath(path, paint);
+            paint.setStrokeCap(Paint.Cap.BUTT);
+        }
+
+        private void drawPaleStatusShell(Canvas canvas, float cx, float cy, float base) {
+            paint.setShader(null);
+            paint.setStyle(Paint.Style.FILL);
+            paint.setColor(Color.argb(32, 255, 73, 119));
+            canvas.drawCircle(cx, cy, base * .43f, paint);
+            paint.setStyle(Paint.Style.STROKE);
+            paint.setStrokeWidth(Math.max(1f, base * .012f));
+            paint.setColor(Color.argb(105, 255, 115, 151));
+            canvas.drawCircle(cx, cy, base * .48f, paint);
         }
 
         private void drawLineIcon(Canvas canvas, float w, float h, int type) {
@@ -6076,12 +7330,12 @@ public class MainActivity extends Activity {
         copy.setPadding(dp(12), 0, dp(10), 0);
         copy.addView(text("Pay on Completion", 14, BLACK, true));
         copy.addView(text("Amount to be collected", 10, MUTED, false), margin(-1, -2, 0, 2, 0, 0));
-        copy.addView(text("₹" + (remoteFinalAmount > 0 ? remoteFinalAmount : 420) + ".00", 16, BLACK, true), margin(-1, -2, 0, 2, 0, 0));
+        copy.addView(text(remoteFinalAmount > 0 ? "₹" + remoteFinalAmount + ".00" : "Price after inspection", 16, BLACK, true), margin(-1, -2, 0, 2, 0, 0));
         card.addView(copy, new LinearLayout.LayoutParams(0, -2, 1));
         TextView confirm = text("Confirm\nCollection", 11, Color.WHITE, true);
         confirm.setGravity(Gravity.CENTER);
         confirm.setBackground(bookGlowButtonDrawable());
-        confirm.setOnClickListener(view -> Toast.makeText(this, "Collection can be confirmed after service completion.", Toast.LENGTH_SHORT).show());
+        confirm.setOnClickListener(view -> SafeToast.makeText(this, "Collection can be confirmed after service completion.", Toast.LENGTH_SHORT).show());
         card.addView(confirm, new LinearLayout.LayoutParams(dp(118), dp(48)));
         return card;
     }
@@ -6233,20 +7487,36 @@ public class MainActivity extends Activity {
         store.addView(logo, new LinearLayout.LayoutParams(dp(68), dp(68)));
         LinearLayout info = vertical();
         info.setPadding(dp(13), 0, 0, 0);
-        info.addView(text("FreshFold Laundry", 18, BLACK, true));
+        String shopName = TextUtils.isEmpty(remoteLaundryShopName) ? assignedPartnerName : remoteLaundryShopName;
+        if (TextUtils.isEmpty(shopName) || "ApnaServo Partner".equals(shopName)) shopName = "Verified Laundry Service";
+        info.addView(text(shopName, 18, BLACK, true));
         info.addView(text("\u2605 4.8   \u2022   Verified Laundry Service", 11, Color.rgb(94, 88, 91), false), margin(-1, -2, 0, 4, 0, 4));
-        info.addView(text(shortLaundryAddress(), 11, MUTED, false));
+        info.addView(text(TextUtils.isEmpty(remoteLaundryShopLocation) ? shortLaundryAddress() : remoteLaundryShopLocation, 11, MUTED, false));
         store.addView(info, new LinearLayout.LayoutParams(0, -2, 1));
         card.addView(store);
         card.addView(insetDivider(0), margin(-1, 1, 0, 12, 0, 12));
+
+        if (TextUtils.isEmpty(remoteLaundryStaffName)) {
+            LinearLayout waiting = horizontal();
+            waiting.setGravity(Gravity.CENTER_VERTICAL);
+            waiting.addView(new BookingFindingArtworkView(BookingFindingArtworkView.RADAR_SIGNAL, BOOKING_THEME),
+                    new LinearLayout.LayoutParams(dp(42), dp(42)));
+            LinearLayout waitCopy = vertical();
+            waitCopy.setPadding(dp(12), 0, 0, 0);
+            waitCopy.addView(text("Staff assignment in progress", 14, BLACK, true));
+            waitCopy.addView(text("The laundry owner will assign a verified pickup staff member.", 10, MUTED, false));
+            waiting.addView(waitCopy, new LinearLayout.LayoutParams(0, -2, 1));
+            card.addView(waiting);
+            return card;
+        }
 
         LinearLayout executive = horizontal();
         executive.setGravity(Gravity.CENTER_VERTICAL);
         executive.addView(bookingPartnerAvatarView(50), new LinearLayout.LayoutParams(dp(50), dp(50)));
         LinearLayout identity = vertical();
         identity.setPadding(dp(11), 0, dp(6), 0);
-        identity.addView(text("Pickup executive", 10, MUTED, false));
-        identity.addView(text(partnerDisplayName(), 14, BLACK, true));
+        identity.addView(text(TextUtils.isEmpty(remoteLaundryStaffRole) ? "Pickup executive" : remoteLaundryStaffRole, 10, MUTED, false));
+        identity.addView(text(remoteLaundryStaffName, 14, BLACK, true));
         identity.addView(text("\u2713 Verified for this order", 10, Color.rgb(42, 148, 91), false));
         executive.addView(identity, new LinearLayout.LayoutParams(0, -2, 1));
         executive.addView(premiumLaundryContactButton(BookingFindingArtworkView.PHONE, "Call", view -> startPartnerCall(latestBooking)), new LinearLayout.LayoutParams(dp(62), dp(58)));
@@ -6570,13 +7840,14 @@ public class MainActivity extends Activity {
         } else if ("on_the_way".equals(status)) {
             visual = bookingTopScooterBadge();
         } else if ("arrived".equals(status)) {
-            visual = bookingTopScooterBadge(true);
+            visual = bookingTopArrivedBadge();
         } else if ("started".equals(status)) {
             visual = bookingTopToolsBadge();
         } else {
             visual = bookingTopToolsBadge();
         }
-        hero.addView(visual, new LinearLayout.LayoutParams(-1, dp(partnerAssignedScreen ? 116 : 100)));
+        int heroVisualHeight = "on_the_way".equals(status) ? 168 : (partnerAssignedScreen ? 116 : 100);
+        hero.addView(visual, new LinearLayout.LayoutParams(-1, dp(heroVisualHeight)));
         hero.addView(bookingAssignedHeroHeading(title), margin(-1, -2, 0, 5, 0, 6));
         TextView body = text(subtitle, 14, Color.rgb(48, 52, 62), false);
         body.setGravity(Gravity.CENTER);
@@ -6596,7 +7867,9 @@ public class MainActivity extends Activity {
             return false;
         }
         String status = bookingFlowStatus();
-        return "pending".equals(status) || "accepted".equals(status);
+        return "pending".equals(status)
+                || "sent_to_partner".equals(status)
+                || "accepted".equals(status);
     }
 
     private View bookingCancelActionCard() {
@@ -6618,7 +7891,7 @@ public class MainActivity extends Activity {
         copy.addView(text("Cancel Booking", 14, Color.rgb(27, 30, 36), true));
         boolean laundry = latestBooking != null && "laundry".equals(latestBookingService().getId());
         TextView sub = text(laundry
-                        ? "You can cancel anytime before your laundry is picked up."
+                        ? "You can cancel before the partner starts travelling."
                         : "Available until your partner starts travelling.",
                 11, Color.rgb(105, 87, 92), false);
         sub.setMaxLines(2);
@@ -6628,7 +7901,7 @@ public class MainActivity extends Activity {
         TextView action = text(isCancellationInFlight(currentBookingId()) ? "Cancelling..." : "Cancel", 13, Color.rgb(227, 38, 77), true);
         action.setGravity(Gravity.CENTER);
         card.addView(action, new LinearLayout.LayoutParams(dp(68), dp(38)));
-        card.setOnClickListener(view -> showCustomerCancelBookingDialog());
+        card.setOnClickListener(view -> cancelCustomerBooking(null));
         addPressAnimation(card);
         section.addView(card);
         return section;
@@ -6668,14 +7941,14 @@ public class MainActivity extends Activity {
         TextView arrow = text("\u203A", 30, BOOKING_THEME, false);
         arrow.setGravity(Gravity.CENTER);
         card.addView(arrow, new LinearLayout.LayoutParams(dp(34), dp(48)));
-        card.setOnClickListener(view -> showCustomerCancelBookingDialog());
+        card.setOnClickListener(view -> cancelCustomerBooking(null));
         addPressAnimation(card);
         return card;
     }
 
     private void showCustomerCancelBookingDialog() {
         if (!canCustomerCancelCurrentBooking()) {
-            Toast.makeText(this, "This booking can no longer be cancelled from the app.", Toast.LENGTH_LONG).show();
+            SafeToast.makeText(this, "This booking can no longer be cancelled from the app.", Toast.LENGTH_LONG).show();
             return;
         }
         AlertDialog dialog = new AlertDialog.Builder(this).create();
@@ -6748,14 +8021,12 @@ public class MainActivity extends Activity {
             rollbackCustomerBookingCancellation(bookingCode, operationVersion, "Backend unavailable");
             return;
         }
-        backendClient.updateBookingStatus(backendBookingId, "cancelled", 0, new BackendClient.JsonCallback() {
-            @Override
-            public void onSuccess(JSONObject object) {
+        backendClient.cancelBooking(backendBookingId, new BackendClient.JsonCallback() {
+            @Override public void onSuccess(JSONObject object) {
                 finishCustomerBookingCancellation(bookingCode, operationVersion);
             }
 
-            @Override
-            public void onError(String message) {
+            @Override public void onError(String message) {
                 rollbackCustomerBookingCancellation(bookingCode, operationVersion, message);
             }
         });
@@ -6765,7 +8036,7 @@ public class MainActivity extends Activity {
         if (!cancellationRegistry.complete(bookingCode, operationVersion)) return;
         applyBookingStatusById(bookingCode, "cancelled", "API_SUCCESS", true);
         bookingLog("API_SUCCESS", bookingCode, "cancelling", "cancelled", "USER_CANCEL");
-        Toast.makeText(this, "Booking cancelled successfully.", Toast.LENGTH_SHORT).show();
+        SafeToast.makeText(this, "Booking cancelled successfully.", Toast.LENGTH_SHORT).show();
         if ("bookings".equals(currentScreen) || bookingCode.equals(currentBookingId())) showBookingsList();
     }
 
@@ -6774,7 +8045,7 @@ public class MainActivity extends Activity {
         if (previous == null) return;
         applyBookingStatusById(bookingCode, previous, "API_FAILURE_ROLLBACK", true);
         bookingLog("API_FAILURE", bookingCode, "cancelling", previous, safeUserError(message));
-        Toast.makeText(this, "Cancel failed: " + safeUserError(message), Toast.LENGTH_LONG).show();
+        SafeToast.makeText(this, "Cancel failed: " + safeUserError(message), Toast.LENGTH_LONG).show();
         if ("bookings".equals(currentScreen) || bookingCode.equals(currentBookingId())) showBookingsList();
     }
 
@@ -6814,14 +8085,9 @@ public class MainActivity extends Activity {
         Service service = latestBookingService();
         screenContent.addView(serviceCompletedHero(), margin(-1, -2, 18, 0, 18, 12));
         screenContent.addView(serviceCompletedPartnerCard(service), margin(-1, -2, 18, 0, 18, 12));
+        screenContent.addView(serviceCompletedWorkCard(service), margin(-1, -2, 18, 0, 18, 12));
         screenContent.addView(serviceCompletedDirectPaymentCard(), margin(-1, -2, 18, 0, 18, 12));
-        screenContent.addView(serviceCompletedAmountCard(), margin(-1, -2, 18, 0, 18, 12));
-        screenContent.addView(serviceCompletedSafetyCard(), margin(-1, -2, 18, 0, 18, 14));
-        screenContent.addView(serviceCompletedPayButton(), margin(-1, 58, 18, 0, 18, 10));
-
-        TextView secure = text("\uD83D\uDD12  Secure & Safe Payment", 12, MUTED, false);
-        secure.setGravity(Gravity.CENTER);
-        screenContent.addView(secure, margin(-1, -2, 18, 0, 18, 28));
+        screenContent.addView(serviceCompletedAmountPayCard(), margin(-1, -2, 18, 0, 18, 28));
     }
 
     private View serviceCompletedHero() {
@@ -6830,7 +8096,7 @@ public class MainActivity extends Activity {
         hero.setPadding(dp(8), 0, dp(8), dp(8));
         hero.addView(bookingSuccessCelebration(), new LinearLayout.LayoutParams(dp(260), dp(170)));
 
-        TextView title = text("Service Completed!", 26, Color.rgb(17, 24, 31), true);
+        TextView title = text("Service Completed!", 26, Color.rgb(91, 4, 34), true);
         title.setGravity(Gravity.CENTER);
         hero.addView(title, margin(-1, -2, 0, 0, 0, 8));
 
@@ -6852,6 +8118,7 @@ public class MainActivity extends Activity {
 
     private View serviceCompletedPartnerCard(Service service) {
         LinearLayout card = bookingPanel(16);
+        card.setElevation(0f);
         card.setGravity(Gravity.CENTER_VERTICAL);
 
         LinearLayout row = horizontal();
@@ -6864,13 +8131,13 @@ public class MainActivity extends Activity {
         name.setMaxLines(1);
         name.setEllipsize(TextUtils.TruncateAt.END);
         details.addView(name);
-        TextView role = text(service.getName() + " Service Expert", 13, MUTED, false);
-        role.setMaxLines(2);
+        TextView role = text(service.getName() + " Expert", 13, MUTED, false);
+        role.setMaxLines(1);
         details.addView(role, margin(-1, -2, 0, 5, 0, 7));
-        TextView partner = text("Service Partner", 11, BOOKING_THEME, true);
+        TextView partner = text("\u2713  Verified Professional", 11, BOOKING_THEME, true);
         partner.setGravity(Gravity.CENTER);
         partner.setBackground(round(BOOKING_THEME_SOFT, dp(13)));
-        details.addView(partner, new LinearLayout.LayoutParams(dp(118), dp(28)));
+        details.addView(partner, new LinearLayout.LayoutParams(dp(154), dp(28)));
         row.addView(details, new LinearLayout.LayoutParams(0, -2, 1));
 
         LinearLayout rating = vertical();
@@ -6897,7 +8164,7 @@ public class MainActivity extends Activity {
         card.setGravity(Gravity.CENTER_VERTICAL);
         card.setPadding(dp(16), dp(16), dp(16), dp(16));
         card.setBackground(stroke(Color.rgb(241, 255, 247), Color.rgb(205, 239, 220), dp(16)));
-        card.setElevation(dp(4));
+        card.setElevation(0f);
 
         TextView wallet = text("\u25A3", 28, Color.WHITE, true);
         wallet.setGravity(Gravity.CENTER);
@@ -6911,6 +8178,144 @@ public class MainActivity extends Activity {
         body.setLineSpacing(dp(2), 1f);
         copy.addView(body, margin(-1, -2, 0, 4, 0, 0));
         card.addView(copy, new LinearLayout.LayoutParams(0, -2, 1));
+        TextView shield = text("\u2713", 18, Color.rgb(3, 146, 69), true);
+        shield.setGravity(Gravity.CENTER);
+        shield.setBackground(stroke(Color.TRANSPARENT, Color.rgb(3, 146, 69), dp(18)));
+        card.addView(shield, new LinearLayout.LayoutParams(dp(38), dp(38)));
+        return card;
+    }
+
+    private View serviceCompletedWorkCard(Service service) {
+        LinearLayout card = bookingPanel(16);
+        card.setElevation(0f);
+        LinearLayout heading = horizontal();
+        heading.setGravity(Gravity.CENTER_VERTICAL);
+        TextView icon = text("\u2713", 17, BOOKING_THEME, true);
+        icon.setGravity(Gravity.CENTER);
+        icon.setBackground(stroke(Color.rgb(255, 244, 247), Color.rgb(255, 178, 195), dp(18)));
+        heading.addView(icon, new LinearLayout.LayoutParams(dp(38), dp(38)));
+        LinearLayout titleCopy = vertical();
+        titleCopy.setPadding(dp(11), 0, 0, 0);
+        titleCopy.addView(text("Work Completed", 17, Color.rgb(15, 29, 48), true));
+        titleCopy.addView(text("Here is the work details submitted by your partner.", 11, MUTED, false), margin(-1, -2, 0, 2, 0, 0));
+        heading.addView(titleCopy, new LinearLayout.LayoutParams(0, -2, 1));
+        card.addView(heading);
+
+        View topDivider = new View(this);
+        topDivider.setBackgroundColor(Color.rgb(242, 229, 233));
+        card.addView(topDivider, margin(-1, 1, 10, 0, 0, 8));
+
+        List<String> tasks = partnerSubmittedWorkItems();
+        LinearLayout checklist = vertical();
+        for (String completedTask : tasks) {
+            LinearLayout taskRow = horizontal();
+            taskRow.setGravity(Gravity.CENTER_VERTICAL);
+            TextView bullet = text("\u2022", 19, BOOKING_THEME, true);
+            bullet.setGravity(Gravity.CENTER);
+            taskRow.addView(bullet, new LinearLayout.LayoutParams(dp(24), dp(34)));
+            TextView task = text(completedTask, 12, Color.rgb(27, 41, 59), false);
+            task.setMaxLines(2);
+            taskRow.addView(task, new LinearLayout.LayoutParams(0, -2, 1));
+            TextView done = text("Completed", 11, Color.rgb(0, 164, 72), true);
+            done.setGravity(Gravity.RIGHT | Gravity.CENTER_VERTICAL);
+            taskRow.addView(done, new LinearLayout.LayoutParams(dp(74), dp(34)));
+            checklist.addView(taskRow, new LinearLayout.LayoutParams(-1, -2));
+        }
+        if (tasks.isEmpty()) {
+            checklist.addView(text("Partner is submitting the completed work details.", 12, MUTED, false));
+        }
+        card.addView(checklist, margin(-1, -2, 0, 12, 0, 8));
+
+        String note = partnerCompletionNote();
+        if (!TextUtils.isEmpty(note)) {
+            View divider = new View(this);
+            divider.setBackgroundColor(Color.rgb(242, 229, 233));
+            card.addView(divider, margin(-1, 1, 4, 0, 0, 10));
+            card.addView(text("Partner's Note", 12, BOOKING_THEME, true));
+            card.addView(text("\"" + note + "\"", 12, MUTED, false), margin(-1, -2, 0, 5, 0, 10));
+        }
+
+        LinearLayout quote = horizontal();
+        quote.setGravity(Gravity.CENTER_VERTICAL);
+        quote.setPadding(dp(10), dp(8), dp(10), dp(8));
+        quote.setBackground(round(Color.rgb(255, 243, 247), dp(13)));
+        TextView wallet = text("\u25A3", 20, BOOKING_THEME, true);
+        wallet.setGravity(Gravity.CENTER);
+        wallet.setBackground(round(Color.rgb(255, 224, 233), dp(21)));
+        quote.addView(wallet, new LinearLayout.LayoutParams(dp(42), dp(42)));
+        TextView quoteLabel = text("Total Amount Quoted by Partner", 12, Color.rgb(34, 38, 45), false);
+        quoteLabel.setPadding(dp(10), 0, dp(6), 0);
+        quote.addView(quoteLabel, new LinearLayout.LayoutParams(0, -2, 1));
+        quote.addView(text(formattedFinalAmount(), 17, BOOKING_THEME, true));
+        card.addView(quote, margin(-1, -2, 0, 8, 0, 0));
+        return card;
+    }
+
+    private List<String> partnerSubmittedWorkItems() {
+        List<String> result = new ArrayList<>();
+        if (remoteServiceWorkDetails != null) {
+            JSONArray tasks = remoteServiceWorkDetails.optJSONArray("completedTasks");
+            if (tasks != null) {
+                for (int index = 0; index < tasks.length(); index++) {
+                    JSONObject task = tasks.optJSONObject(index);
+                    addUniqueWorkItem(result, task == null ? tasks.optString(index, "") : task.optString("name", ""));
+                }
+            }
+            JSONArray custom = remoteServiceWorkDetails.optJSONArray("customWork");
+            if (custom != null) {
+                for (int index = 0; index < custom.length(); index++) addUniqueWorkItem(result, custom.optString(index, ""));
+            }
+            if (result.isEmpty()) addUniqueWorkItem(result, remoteServiceWorkDetails.optString("description", ""));
+        }
+        if (result.isEmpty() && latestBooking != null) {
+            for (String task : latestBooking.getCompletedTasks()) addUniqueWorkItem(result, task);
+            if (result.isEmpty()) addUniqueWorkItem(result, latestBooking.getAdditionalWork());
+        }
+        return result;
+    }
+
+    private void addUniqueWorkItem(List<String> items, String candidate) {
+        if (candidate == null) return;
+        String clean = candidate.trim();
+        if (clean.isEmpty()) return;
+        for (String item : items) if (item.equalsIgnoreCase(clean)) return;
+        items.add(clean);
+    }
+
+    private String partnerCompletionNote() {
+        String note = remoteServiceWorkDetails == null ? "" : remoteServiceWorkDetails.optString("additionalNotes", "").trim();
+        if (TextUtils.isEmpty(note) && latestBooking != null) note = latestBooking.getPartnerNotes();
+        return note == null ? "" : note.trim();
+    }
+
+    private String formattedFinalAmount() {
+        if (remoteFinalAmount <= 0) return "Awaiting amount";
+        return "\u20B9 " + java.text.NumberFormat.getNumberInstance(new Locale("en", "IN")).format(remoteFinalAmount);
+    }
+
+    private View serviceCompletedAmountPayCard() {
+        LinearLayout card = bookingPanel(14);
+        card.setElevation(0f);
+        LinearLayout row = horizontal();
+        row.setGravity(Gravity.CENTER_VERTICAL);
+        TextView rupee = text("\u20B9", 28, BOOKING_THEME, true);
+        rupee.setGravity(Gravity.CENTER);
+        rupee.setBackground(round(BOOKING_THEME_SOFT, dp(28)));
+        row.addView(rupee, new LinearLayout.LayoutParams(dp(56), dp(56)));
+        LinearLayout amountCopy = vertical();
+        amountCopy.setPadding(dp(12), 0, dp(8), 0);
+        amountCopy.addView(text("Amount to be paid", 12, MUTED, false));
+        amountCopy.addView(text(formattedFinalAmount(), remoteFinalAmount > 0 ? 22 : 15, BOOKING_THEME, true), margin(-1, -2, 0, 3, 0, 0));
+        row.addView(amountCopy, new LinearLayout.LayoutParams(0, -2, 1));
+        TextView pay = text("\u20B9   Pay to Partner", 14, Color.WHITE, true);
+        pay.setGravity(Gravity.CENTER);
+        pay.setBackground(gradient(Color.rgb(255, 37, 92), Color.rgb(225, 0, 75), dp(14)));
+        pay.setEnabled(remoteFinalAmount > 0);
+        pay.setAlpha(remoteFinalAmount > 0 ? 1f : 0.55f);
+        pay.setOnClickListener(view -> confirmFinalAmount(latestBooking));
+        addPressAnimation(pay);
+        row.addView(pay, new LinearLayout.LayoutParams(dp(154), dp(58)));
+        card.addView(row);
         return card;
     }
 
@@ -7031,7 +8436,7 @@ public class MainActivity extends Activity {
     private View paymentWaitingHero() {
         LinearLayout hero = vertical();
         hero.setGravity(Gravity.CENTER_HORIZONTAL);
-        hero.addView(paymentWaitingClockArtwork(), new LinearLayout.LayoutParams(dp(172), dp(172)));
+        hero.addView(paymentWaitingClockArtwork(), new LinearLayout.LayoutParams(dp(196), dp(196)));
         TextView title = text("Waiting for Verification", 26, Color.rgb(17, 24, 31), true);
         title.setGravity(Gravity.CENTER);
         hero.addView(title, margin(-1, -2, 0, 4, 0, 8));
@@ -7050,27 +8455,100 @@ public class MainActivity extends Activity {
     }
 
     private View paymentWaitingClockArtwork() {
-        FrameLayout artwork = new FrameLayout(this);
-        View outer = new View(this);
-        outer.setBackground(stroke(Color.TRANSPARENT, Color.rgb(226, 238, 229), dp(76)));
-        artwork.addView(outer, new FrameLayout.LayoutParams(dp(152), dp(152), Gravity.CENTER));
-        View glow = new View(this);
-        glow.setBackground(round(Color.rgb(230, 250, 237), dp(63)));
-        artwork.addView(glow, new FrameLayout.LayoutParams(dp(126), dp(126), Gravity.CENTER));
-        TextView clock = text("\u25F7", 56, Color.rgb(5, 166, 83), true);
-        clock.setGravity(Gravity.CENTER);
-        artwork.addView(clock, new FrameLayout.LayoutParams(dp(94), dp(94), Gravity.CENTER));
-        int[][] sparks = {{18, 34}, {138, 42}, {29, 132}, {135, 126}};
-        for (int i = 0; i < sparks.length; i++) {
-            TextView spark = text(i % 2 == 0 ? "+" : "\u2022", 16, i % 2 == 0 ? Color.rgb(255, 160, 179) : GREEN, true);
-            FrameLayout.LayoutParams params = new FrameLayout.LayoutParams(dp(22), dp(22));
-            params.leftMargin = dp(sparks[i][0]);
-            params.topMargin = dp(sparks[i][1]);
-            artwork.addView(spark, params);
-            startScalePulse(spark, 0.75f, 1.18f, 850 + (i * 130));
+        return new PaymentVerificationClockView(this);
+    }
+
+    /** Reference-accurate verification artwork: progress arc, dotted orbit, nodes and outlined clock. */
+    private final class PaymentVerificationClockView extends View {
+        private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private final RectF orbit = new RectF();
+        private ValueAnimator arcAnimator;
+        private float arcRotation;
+
+        PaymentVerificationClockView(android.content.Context context) {
+            super(context);
         }
-        startScalePulse(glow, 0.96f, 1.04f, 1200);
-        return artwork;
+
+        @Override
+        protected void onAttachedToWindow() {
+            super.onAttachedToWindow();
+            arcAnimator = ValueAnimator.ofFloat(0f, 360f);
+            arcAnimator.setDuration(2600L);
+            arcAnimator.setRepeatCount(ValueAnimator.INFINITE);
+            arcAnimator.setInterpolator(new android.view.animation.LinearInterpolator());
+            arcAnimator.addUpdateListener(animation -> {
+                arcRotation = (float) animation.getAnimatedValue();
+                invalidate();
+            });
+            arcAnimator.start();
+        }
+
+        @Override
+        protected void onDetachedFromWindow() {
+            if (arcAnimator != null) arcAnimator.cancel();
+            arcAnimator = null;
+            super.onDetachedFromWindow();
+        }
+
+        @Override
+        protected void onDraw(Canvas canvas) {
+            super.onDraw(canvas);
+            float width = getWidth();
+            float height = getHeight();
+            float cx = width / 2f;
+            float cy = height / 2f;
+            float unit = Math.min(width, height) / 196f;
+
+            paint.setStyle(Paint.Style.FILL);
+            paint.setColor(Color.rgb(255, 241, 245));
+            canvas.drawCircle(cx, cy, 61f * unit, paint);
+            paint.setColor(Color.rgb(255, 232, 239));
+            canvas.drawCircle(cx, cy, 46f * unit, paint);
+
+            float radius = 76f * unit;
+            orbit.set(cx - radius, cy - radius, cx + radius, cy + radius);
+            paint.setStyle(Paint.Style.STROKE);
+            paint.setStrokeCap(Paint.Cap.ROUND);
+            paint.setStrokeWidth(1.6f * unit);
+            paint.setColor(Color.rgb(255, 92, 132));
+            paint.setPathEffect(new android.graphics.DashPathEffect(new float[]{4f * unit, 5f * unit}, 0f));
+            canvas.drawArc(orbit, 18f, 252f, false, paint);
+
+            paint.setPathEffect(null);
+            paint.setStrokeWidth(7f * unit);
+            paint.setColor(Color.rgb(238, 38, 92));
+            canvas.drawArc(orbit, 274f + arcRotation, 78f, false, paint);
+
+            paint.setStyle(Paint.Style.FILL);
+            paint.setColor(Color.rgb(250, 125, 155));
+            drawOrbitNode(canvas, cx, cy, radius, 146f, 6f * unit, paint);
+            drawOrbitNode(canvas, cx, cy, radius, 42f, 6f * unit, paint);
+            drawOrbitNode(canvas, cx, cy, radius, 210f, 6f * unit, paint);
+
+            float clockRadius = 31f * unit;
+            paint.setStyle(Paint.Style.STROKE);
+            paint.setStrokeWidth(7f * unit);
+            paint.setStrokeCap(Paint.Cap.ROUND);
+            paint.setColor(Color.rgb(235, 29, 88));
+            canvas.drawCircle(cx, cy, clockRadius, paint);
+            paint.setStrokeWidth(7f * unit);
+            canvas.drawLine(cx, cy, cx, cy - 18f * unit, paint);
+            canvas.drawLine(cx, cy, cx + 17f * unit, cy, paint);
+
+            paint.setStyle(Paint.Style.FILL);
+            paint.setColor(Color.rgb(235, 29, 88));
+            canvas.drawCircle(cx, cy, 4.2f * unit, paint);
+        }
+
+        private void drawOrbitNode(Canvas canvas, float cx, float cy, float radius, float degrees, float size, Paint nodePaint) {
+            double angle = Math.toRadians(degrees);
+            canvas.drawCircle(
+                    cx + ((float) Math.cos(angle) * radius),
+                    cy + ((float) Math.sin(angle) * radius),
+                    size,
+                    nodePaint
+            );
+        }
     }
 
     private View paymentWaitingNextCard() {
@@ -7078,7 +8556,9 @@ public class MainActivity extends Activity {
         card.setGravity(Gravity.CENTER_VERTICAL);
         card.setPadding(dp(16), dp(18), dp(16), dp(18));
         card.setBackground(stroke(Color.rgb(241, 255, 248), Color.rgb(190, 235, 211), dp(18)));
-        card.addView(bookingFlowIcon("i", GREEN, Color.rgb(222, 250, 234), 54), new LinearLayout.LayoutParams(dp(58), dp(58)));
+        View nextIcon = bookingFlowIcon("\u2713", GREEN, Color.rgb(222, 250, 234), 54);
+        nextIcon.setElevation(0f);
+        card.addView(nextIcon, new LinearLayout.LayoutParams(dp(58), dp(58)));
         LinearLayout copy = vertical();
         copy.setPadding(dp(14), 0, 0, 0);
         copy.addView(text("What happens next?", 15, BLACK, true));
@@ -7105,9 +8585,6 @@ public class MainActivity extends Activity {
         body.setLineSpacing(dp(2), 1f);
         copy.addView(body, margin(-1, -2, 0, 4, 0, 0));
         card.addView(copy, new LinearLayout.LayoutParams(0, -2, 1));
-        TextView lock = text("\u25A3", 31, Color.rgb(246, 87, 121), true);
-        lock.setGravity(Gravity.CENTER);
-        card.addView(lock, new LinearLayout.LayoutParams(dp(54), dp(54)));
         return card;
     }
 
@@ -7116,8 +8593,10 @@ public class MainActivity extends Activity {
         card.setGravity(Gravity.CENTER_VERTICAL);
         card.setPadding(dp(16), dp(16), dp(14), dp(16));
         card.setBackground(round(Color.WHITE, dp(18)));
-        card.setElevation(dp(6));
-        card.addView(bookingFlowIcon("?", BOOKING_THEME, BOOKING_THEME_SOFT, 48), new LinearLayout.LayoutParams(dp(52), dp(52)));
+        card.setElevation(0f);
+        View helpIcon = bookingFlowIcon("?", BOOKING_THEME, BOOKING_THEME_SOFT, 48);
+        helpIcon.setElevation(0f);
+        card.addView(helpIcon, new LinearLayout.LayoutParams(dp(52), dp(52)));
         LinearLayout copy = vertical();
         copy.setPadding(dp(13), 0, 0, 0);
         copy.addView(text("Need Help?", 15, BLACK, true));
@@ -7153,6 +8632,10 @@ public class MainActivity extends Activity {
         copy.addView(text("Paid directly to your service partner", 15, BLACK, true));
         copy.addView(text("Thank you for using ApnaServo!", 13, MUTED, false), margin(-1, -2, 0, 4, 0, 0));
         card.addView(copy, new LinearLayout.LayoutParams(0, -2, 1));
+        TextView shield = text("\u2713", 24, GREEN, true);
+        shield.setGravity(Gravity.CENTER);
+        shield.setBackground(stroke(Color.rgb(241, 255, 248), GREEN, dp(24)));
+        card.addView(shield, new LinearLayout.LayoutParams(dp(52), dp(52)));
         return card;
     }
 
@@ -7213,6 +8696,19 @@ public class MainActivity extends Activity {
         labels.addView(excellent, new LinearLayout.LayoutParams(0, -2, 1));
         card.addView(labels);
 
+        partnerRatingFeedbackInput = new EditText(this);
+        partnerRatingFeedbackInput.setHint("Write your feedback (optional)");
+        partnerRatingFeedbackInput.setTextSize(13);
+        partnerRatingFeedbackInput.setTextColor(BLACK);
+        partnerRatingFeedbackInput.setHintTextColor(MUTED);
+        partnerRatingFeedbackInput.setGravity(Gravity.TOP | Gravity.LEFT);
+        partnerRatingFeedbackInput.setPadding(dp(14), dp(12), dp(14), dp(12));
+        partnerRatingFeedbackInput.setMaxLines(4);
+        partnerRatingFeedbackInput.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_CAP_SENTENCES | InputType.TYPE_TEXT_FLAG_MULTI_LINE);
+        partnerRatingFeedbackInput.setBackground(stroke(Color.WHITE, Color.rgb(255, 196, 207), dp(14)));
+        partnerRatingFeedbackInput.setEnabled(submittedRating == 0);
+        card.addView(partnerRatingFeedbackInput, margin(-1, 82, 0, 12, 0, 0));
+
         TextView submit = text(submittedRating > 0 ? "Rating Submitted" : "Submit Rating", 15,
                 submittedRating > 0 ? GREEN : BOOKING_THEME, true);
         submit.setGravity(Gravity.CENTER);
@@ -7226,14 +8722,15 @@ public class MainActivity extends Activity {
 
     private void submitPartnerRating(String bookingId, TextView submit) {
         if (TextUtils.isEmpty(bookingId) || selectedPartnerRating < 1 || selectedPartnerRating > 5) {
-            Toast.makeText(this, "Select a rating before submitting", Toast.LENGTH_SHORT).show();
+            SafeToast.makeText(this, "Select a rating before submitting", Toast.LENGTH_SHORT).show();
             return;
         }
         if (partnerRatingSubmitting) return;
         partnerRatingSubmitting = true;
         submit.setEnabled(false);
         submit.setText("Submitting...");
-        backendClient.submitReview(bookingId, selectedPartnerRating, "", new BackendClient.JsonCallback() {
+        String feedback = partnerRatingFeedbackInput == null ? "" : partnerRatingFeedbackInput.getText().toString().trim();
+        backendClient.submitReview(bookingId, selectedPartnerRating, feedback, new BackendClient.JsonCallback() {
             @Override
             public void onSuccess(JSONObject object) {
                 partnerRatingSubmitting = false;
@@ -7245,7 +8742,7 @@ public class MainActivity extends Activity {
                     bookingPartnerRatingCache.put(bookingId, assignedPartnerRating);
                     bookingPartnerRatingCountCache.put(bookingId, assignedPartnerRatingCount);
                 }
-                Toast.makeText(MainActivity.this, "Rating submitted successfully", Toast.LENGTH_SHORT).show();
+                SafeToast.makeText(MainActivity.this, "Rating submitted successfully", Toast.LENGTH_SHORT).show();
                 showBookingCompletedScreen(bookingId);
             }
 
@@ -7256,11 +8753,11 @@ public class MainActivity extends Activity {
                 submit.setText("Submit Rating");
                 if (message != null && message.contains("409")) {
                     putSecureString(ratingPreferenceKey(bookingId), String.valueOf(selectedPartnerRating));
-                    Toast.makeText(MainActivity.this, "This booking is already rated", Toast.LENGTH_SHORT).show();
+                    SafeToast.makeText(MainActivity.this, "This booking is already rated", Toast.LENGTH_SHORT).show();
                     showBookingCompletedScreen(bookingId);
                     return;
                 }
-                Toast.makeText(MainActivity.this, "Rating could not be submitted. Please try again.", Toast.LENGTH_SHORT).show();
+                SafeToast.makeText(MainActivity.this, "Rating could not be submitted. Please try again.", Toast.LENGTH_SHORT).show();
             }
         });
     }
@@ -7355,7 +8852,7 @@ public class MainActivity extends Activity {
         TextView check = text("\u2713", 40, Color.WHITE, true);
         check.setGravity(Gravity.CENTER);
         check.setBackground(round(BOOKING_THEME, dp(50)));
-        check.setElevation(dp(7));
+        check.setElevation(0f);
         FrameLayout.LayoutParams checkParams = new FrameLayout.LayoutParams(dp(74), dp(74), Gravity.CENTER);
         frame.addView(check, checkParams);
         addSpark(frame, 96, 10, 7, Color.rgb(255, 132, 0));
@@ -7372,11 +8869,41 @@ public class MainActivity extends Activity {
     }
 
     private View bookingTopScooterBadge(boolean checked) {
-        return bookingStatusTopBadge(BookingFindingArtworkView.SCOOTER, checked);
+        FrameLayout frame = new FrameLayout(this);
+        frame.setClipChildren(false);
+        frame.setClipToPadding(false);
+        ImageView artwork = new ImageView(this);
+        artwork.setImageResource(R.drawable.booking_partner_on_way_v2);
+        artwork.setScaleType(ImageView.ScaleType.CENTER_INSIDE);
+        frame.addView(artwork, new FrameLayout.LayoutParams(dp(162), dp(162), Gravity.CENTER));
+        if (checked) {
+            TextView check = text("\u2713", 18, Color.WHITE, true);
+            check.setGravity(Gravity.CENTER);
+            check.setBackground(round(Color.rgb(0, 146, 65), dp(16)));
+            FrameLayout.LayoutParams params = new FrameLayout.LayoutParams(dp(30), dp(30), Gravity.CENTER);
+            params.leftMargin = dp(112);
+            params.topMargin = dp(92);
+            frame.addView(check, params);
+        }
+        addSpark(frame, 68, 28, 7, Color.rgb(255, 132, 0));
+        addSpark(frame, 286, 38, 6, Color.rgb(66, 179, 95));
+        addSpark(frame, 310, 94, 5, Color.rgb(32, 123, 221));
+        return frame;
     }
 
     private View bookingTopToolsBadge() {
-        return bookingStatusTopBadge(BookingFindingArtworkView.TOOLS, false);
+        FrameLayout frame = new FrameLayout(this);
+        frame.setClipChildren(false);
+        frame.setClipToPadding(false);
+        ImageView artwork = new ImageView(this);
+        artwork.setImageResource(R.drawable.booking_work_in_progress_v2);
+        artwork.setScaleType(ImageView.ScaleType.CENTER_INSIDE);
+        frame.addView(artwork, new FrameLayout.LayoutParams(dp(116), dp(116), Gravity.CENTER));
+        return frame;
+    }
+
+    private View bookingTopArrivedBadge() {
+        return bookingStatusTopBadge(BookingFindingArtworkView.ARRIVED, false);
     }
 
     private View bookingStatusTopBadge(int artwork, boolean checked) {
@@ -7459,7 +8986,7 @@ public class MainActivity extends Activity {
     private View bookingPartnerAvatarView(int sizeDp) {
         FrameLayout frame = new FrameLayout(this);
         frame.setBackground(round(BOOKING_THEME_SOFT, dp(sizeDp / 2)));
-        frame.setElevation(dp(8));
+        frame.setElevation(0f);
         frame.addView(new BookingFindingArtworkView(BookingFindingArtworkView.PARTNER_AVATAR),
                 new FrameLayout.LayoutParams(-1, -1, Gravity.CENTER));
         String photoUrl = assignedPartnerPhotoUrl == null ? "" : assignedPartnerPhotoUrl.trim();
@@ -7488,7 +9015,7 @@ public class MainActivity extends Activity {
         TextView icon = text(value, 34, color, true);
         icon.setGravity(Gravity.CENTER);
         icon.setBackground(round(bgColor, dp(sizeDp / 2)));
-        icon.setElevation(dp(6));
+        icon.setElevation(0f);
         return icon;
     }
 
@@ -7560,7 +9087,7 @@ public class MainActivity extends Activity {
         card.addView(top);
 
         if ("on_the_way".equals(status)) {
-            card.addView(paymentPopupRow("Distance", "2.1 km away"), margin(-1, -2, 0, 12, 0, 0));
+            card.addView(paymentPopupRow("Distance", livePartnerDistanceLabel(status)), margin(-1, -2, 0, 12, 0, 0));
             card.addView(paymentPopupRow("ETA", partnerArrivalDisplay()), margin(-1, -2, 0, 8, 0, 0));
         } else if ("started".equals(status)) {
             card.addView(paymentPopupRow("Started at", new SimpleDateFormat("hh:mm a", Locale.getDefault()).format(new Date())), margin(-1, -2, 0, 12, 0, 0));
@@ -7589,7 +9116,7 @@ public class MainActivity extends Activity {
         TextView share = text("Share OTP", 13, Color.WHITE, true);
         share.setGravity(Gravity.CENTER);
         share.setBackground(bookGlowButtonDrawable());
-        share.setOnClickListener(view -> Toast.makeText(this, "OTP verification shared with partner", Toast.LENGTH_SHORT).show());
+        share.setOnClickListener(view -> SafeToast.makeText(this, "OTP verification shared with partner", Toast.LENGTH_SHORT).show());
         addPressAnimation(share);
         card.addView(share, new LinearLayout.LayoutParams(-1, dp(46)));
         card.addView(text("Waiting for customer verification", 11, MUTED, false), margin(-1, -2, 0, 8, 0, 0));
@@ -7897,6 +9424,8 @@ public class MainActivity extends Activity {
         sheet.addView(paymentPopupRow("Booking", booking.getId()));
         sheet.addView(paymentPopupRow("Service", primaryService(booking).getName()), margin(-1, -2, 0, 8, 0, 0));
         sheet.addView(paymentPopupRow("Slot", trackDateLabel(booking) + " | " + trackTimeLabel(booking)), margin(-1, -2, 0, 8, 0, 14));
+        View workDetails = paymentWorkDetailsCard();
+        if (workDetails != null) sheet.addView(workDetails, margin(-1, -2, 0, 0, 0, 14));
 
         sheet.addView(text("Choose Payment Method", 13, BLACK, true), margin(-1, -2, 0, 0, 0, 8));
         sheet.addView(paymentMethodOption("UPI", true));
@@ -7942,6 +9471,35 @@ public class MainActivity extends Activity {
         return row;
     }
 
+    private View paymentWorkDetailsCard() {
+        if (remoteServiceWorkDetails == null) return null;
+        String description = remoteServiceWorkDetails.optString("description", "").trim();
+        JSONArray tasks = remoteServiceWorkDetails.optJSONArray("completedTasks");
+        JSONArray custom = remoteServiceWorkDetails.optJSONArray("customWork");
+        if (description.isEmpty() && (tasks == null || tasks.length() == 0) && (custom == null || custom.length() == 0)) return null;
+        LinearLayout card = vertical();
+        card.setPadding(dp(14), dp(12), dp(14), dp(12));
+        card.setBackground(stroke(Color.rgb(255, 251, 252), Color.rgb(247, 205, 216), dp(14)));
+        card.addView(text("Work / Service Details", 13, BLACK, true));
+        if (!description.isEmpty()) card.addView(text(description, 12, MUTED, false), margin(-1, -2, 0, 5, 0, 7));
+        if (tasks != null) {
+            for (int index = 0; index < tasks.length(); index++) {
+                JSONObject task = tasks.optJSONObject(index);
+                String name = task == null ? tasks.optString(index, "") : task.optString("name", "");
+                if (!name.isEmpty()) card.addView(text("\u2713  " + name, 12, Color.rgb(20, 112, 68), false), margin(-1, -2, 0, 3, 0, 0));
+            }
+        }
+        if (custom != null) {
+            for (int index = 0; index < custom.length(); index++) {
+                String name = custom.optString(index, "");
+                if (!name.isEmpty()) card.addView(text("\u2713  " + name, 12, Color.rgb(20, 112, 68), false), margin(-1, -2, 0, 3, 0, 0));
+            }
+        }
+        String notes = remoteServiceWorkDetails.optString("additionalNotes", "").trim();
+        if (!notes.isEmpty()) card.addView(text("Note: " + notes, 11, MUTED, false), margin(-1, -2, 0, 7, 0, 0));
+        return card;
+    }
+
     private View paymentMethodOption(String label, boolean selected) {
         LinearLayout row = horizontal();
         row.setGravity(Gravity.CENTER_VERTICAL);
@@ -7954,7 +9512,7 @@ public class MainActivity extends Activity {
         TextView radio = text(selected ? "\u25CF" : "\u25CB", 14, selected ? Color.rgb(247, 65, 112) : MUTED, true);
         radio.setGravity(Gravity.CENTER);
         row.addView(radio, new LinearLayout.LayoutParams(dp(28), -2));
-        row.setOnClickListener(view -> Toast.makeText(this, label + " selected", Toast.LENGTH_SHORT).show());
+        row.setOnClickListener(view -> SafeToast.makeText(this, label + " selected", Toast.LENGTH_SHORT).show());
         addPressAnimation(row);
         return row;
     }
@@ -8011,18 +9569,18 @@ public class MainActivity extends Activity {
         send.setOnClickListener(view -> {
             String rawAmount = amountInput.getText().toString().trim();
             if (TextUtils.isEmpty(rawAmount)) {
-                Toast.makeText(this, "Please enter your offer amount.", Toast.LENGTH_SHORT).show();
+                SafeToast.makeText(this, "Please enter your offer amount.", Toast.LENGTH_SHORT).show();
                 return;
             }
             int amount;
             try {
                 amount = Integer.parseInt(rawAmount);
             } catch (Exception ignored) {
-                Toast.makeText(this, "Please enter a valid amount.", Toast.LENGTH_SHORT).show();
+                SafeToast.makeText(this, "Please enter a valid amount.", Toast.LENGTH_SHORT).show();
                 return;
             }
             if (amount <= 0) {
-                Toast.makeText(this, "Please enter a valid amount.", Toast.LENGTH_SHORT).show();
+                SafeToast.makeText(this, "Please enter a valid amount.", Toast.LENGTH_SHORT).show();
                 return;
             }
             send.setEnabled(false);
@@ -8035,14 +9593,14 @@ public class MainActivity extends Activity {
                     remoteQuoteCounterMessage = messageInput.getText().toString().trim();
                     dismissAmountApprovalPopup();
                     dialog.dismiss();
-                    Toast.makeText(MainActivity.this, "Counter offer sent to partner", Toast.LENGTH_SHORT).show();
+                    SafeToast.makeText(MainActivity.this, "Counter offer sent to partner", Toast.LENGTH_SHORT).show();
                     showTrack();
                 }
 
                 @Override
                 public void onError(String message) {
                     send.setEnabled(true);
-                    Toast.makeText(MainActivity.this, "Counter offer failed. Try again.", Toast.LENGTH_SHORT).show();
+                    SafeToast.makeText(MainActivity.this, "Counter offer failed. Try again.", Toast.LENGTH_SHORT).show();
                 }
             });
         });
@@ -8066,18 +9624,18 @@ public class MainActivity extends Activity {
     private void confirmFinalAmount(Booking booking) {
         if (!requireFeature(FeatureRegistry.PAYMENT, "Payment")) return;
         if (remoteFinalAmount <= 0) {
-            Toast.makeText(this, "Final amount missing", Toast.LENGTH_SHORT).show();
+            SafeToast.makeText(this, "Final amount missing", Toast.LENGTH_SHORT).show();
             return;
         }
         if (!isAmountApprovalPending()) {
-            Toast.makeText(this, isRemoteQuoteExpired() ? "Quote expired. Ask partner for a fresh quote." : "Quote is not ready for approval.", Toast.LENGTH_LONG).show();
+            SafeToast.makeText(this, isRemoteQuoteExpired() ? "Quote expired. Ask partner for a fresh quote." : "Quote is not ready for approval.", Toast.LENGTH_LONG).show();
             fetchBookingAssignmentStatus();
             return;
         }
         paymentVerificationWaitingBookingId = booking.getId();
         remoteQuoteStatus = "payment_submitted";
         dismissAmountApprovalPopup();
-        Toast.makeText(this, "Waiting for partner payment verification", Toast.LENGTH_SHORT).show();
+        SafeToast.makeText(this, "Waiting for partner payment verification", Toast.LENGTH_SHORT).show();
         showBookingConfirmedScreen();
         String bookingId = TextUtils.isEmpty(latestBackendBookingId) ? booking.getId() : latestBackendBookingId;
         backendClient.submitDirectPayment(bookingId, new BackendClient.JsonCallback() {
@@ -8085,6 +9643,7 @@ public class MainActivity extends Activity {
             public void onSuccess(JSONObject object) {
                 JSONObject remote = object.optJSONObject("booking");
                 if (remote != null) {
+                    remoteServiceWorkDetails = remote.optJSONObject("serviceWorkDetails");
                     updateAssignmentFromServer(
                             remote.optString("status", remoteBookingStatus),
                             remote.optString("partnerName", assignedPartnerName),
@@ -8100,7 +9659,7 @@ public class MainActivity extends Activity {
 
             @Override
             public void onError(String message) {
-                Toast.makeText(MainActivity.this, "Payment confirmation could not be sent. Please try again.", Toast.LENGTH_LONG).show();
+                SafeToast.makeText(MainActivity.this, "Payment confirmation could not be sent. Please try again.", Toast.LENGTH_LONG).show();
                 paymentVerificationWaitingBookingId = "";
                 remoteQuoteStatus = "pending";
                 showBookingConfirmedScreen();
@@ -8200,14 +9759,14 @@ public class MainActivity extends Activity {
                 public void onSuccess(JSONObject object) {
                     finished[0] = true;
                     dialog.dismiss();
-                    Toast.makeText(MainActivity.this, "Review submitted", Toast.LENGTH_SHORT).show();
+                    SafeToast.makeText(MainActivity.this, "Review submitted", Toast.LENGTH_SHORT).show();
                     showBookingsList();
                 }
 
                 @Override
                 public void onError(String message) {
                     submit.setEnabled(true);
-                    Toast.makeText(MainActivity.this, message != null && message.contains("409")
+                    SafeToast.makeText(MainActivity.this, message != null && message.contains("409")
                             ? "This booking is already reviewed"
                             : "Review was not submitted. Please try again.", Toast.LENGTH_SHORT).show();
                 }
@@ -8256,15 +9815,16 @@ public class MainActivity extends Activity {
 
     private void addBookingsListTopBar(List<Booking> bookings) {
         FrameLayout bar = new FrameLayout(this);
-        bar.setPadding(dp(18), dp(22), dp(18), 0);
+        bar.setPadding(dp(18), dp(12), dp(18), 0);
 
-        TextView back = text("\u2039", 35, BOOKING_THEME, false);
-        back.setGravity(Gravity.CENTER);
-        back.setBackground(stroke(Color.rgb(255, 253, 250), Color.rgb(238, 226, 220), dp(26)));
-        back.setElevation(dp(5));
+        FrameLayout back = new FrameLayout(this);
+        back.setBackground(stroke(Color.WHITE, Color.rgb(239, 219, 222), dp(20)));
+        back.setElevation(0f);
+        back.addView(new BookingFindingArtworkView(BookingFindingArtworkView.BACK, BOOKING_THEME),
+                new FrameLayout.LayoutParams(dp(22), dp(22), Gravity.CENTER));
         back.setOnClickListener(view -> handleBackNavigation());
         addPressAnimation(back);
-        FrameLayout.LayoutParams backParams = new FrameLayout.LayoutParams(dp(52), dp(52), Gravity.START | Gravity.TOP);
+        FrameLayout.LayoutParams backParams = new FrameLayout.LayoutParams(dp(38), dp(38), Gravity.START | Gravity.TOP);
         bar.addView(back, backParams);
 
         int activeCount = 0;
@@ -8278,28 +9838,27 @@ public class MainActivity extends Activity {
         }
         LinearLayout copy = vertical();
         copy.setGravity(Gravity.CENTER_HORIZONTAL);
-        TextView title = text("My Bookings", 26, Color.rgb(18, 18, 20), true);
+        TextView title = text("My Bookings", 22, Color.rgb(18, 18, 20), true);
         title.setGravity(Gravity.CENTER);
         copy.addView(title);
-        TextView subtitle = text(activeCount == 0 ? "No active booking yet" : activeCount + (activeCount == 1 ? " active booking" : " active bookings"), 14, Color.rgb(92, 88, 87), false);
+        TextView subtitle = text(activeCount == 0 ? "No active booking yet" : activeCount + (activeCount == 1 ? " active booking" : " active bookings"), 12, Color.rgb(92, 88, 87), false);
         subtitle.setGravity(Gravity.CENTER);
         copy.addView(subtitle, margin(-1, -2, 0, 3, 0, 0));
         FrameLayout.LayoutParams copyParams = new FrameLayout.LayoutParams(-2, -2, Gravity.TOP | Gravity.CENTER_HORIZONTAL);
-        copyParams.topMargin = dp(3);
+        copyParams.topMargin = dp(1);
         bar.addView(copy, copyParams);
 
-        ImageView calendar = tintedIcon(R.drawable.ic_nav_bookings, BOOKING_THEME, 13);
-        calendar.setBackground(stroke(Color.rgb(255, 253, 250), Color.rgb(238, 226, 220), dp(26)));
-        calendar.setElevation(dp(5));
-        calendar.setOnClickListener(view -> {
-            bookingHistoryFilter = "all";
-            showBookingsList();
-        });
-        addPressAnimation(calendar);
-        FrameLayout.LayoutParams calendarParams = new FrameLayout.LayoutParams(dp(52), dp(52), Gravity.END | Gravity.TOP);
-        bar.addView(calendar, calendarParams);
+        TextView help = text("?", 16, Color.rgb(71, 85, 105), true);
+        help.setGravity(Gravity.CENTER);
+        help.setContentDescription("Booking help and support");
+        help.setBackground(stroke(Color.WHITE, Color.rgb(230, 228, 224), dp(20)));
+        help.setElevation(0f);
+        help.setOnClickListener(view -> showSupportChat("I need help with a booking."));
+        addPressAnimation(help);
+        FrameLayout.LayoutParams helpParams = new FrameLayout.LayoutParams(dp(38), dp(38), Gravity.END | Gravity.TOP);
+        bar.addView(help, helpParams);
 
-        screenContent.addView(bar, new LinearLayout.LayoutParams(-1, dp(120)));
+        screenContent.addView(bar, new LinearLayout.LayoutParams(-1, dp(72)));
     }
 
     private View trackSectionTitle(String title) {
@@ -8374,7 +9933,7 @@ public class MainActivity extends Activity {
         card.setGravity(Gravity.CENTER_VERTICAL);
         card.setPadding(dp(16), dp(14), dp(16), dp(14));
         card.setBackground(stroke(Color.WHITE, Color.rgb(238, 238, 238), dp(16)));
-        card.setElevation(dp(3));
+        card.setElevation(0f);
 
         boolean booked = isPartnerAcceptedStatus(remoteBookingStatus) || partnerAssigned;
         String expertName = booked ? assignedPartnerName : "Partner Pending";
@@ -8387,7 +9946,12 @@ public class MainActivity extends Activity {
         LinearLayout copy = vertical();
         copy.setPadding(dp(14), 0, 0, 0);
         copy.addView(text(expertName, 17, BLACK, true));
-        copy.addView(text(booked ? "Service Expert" : "Waiting for partner assignment", 12, MUTED, false), margin(-1, -2, 0, 3, 0, 2));
+        String contactRole = latestBooking == null ? "" : bookingServiceContactRoleCache.get(latestBooking.getId());
+        boolean laundryBooking = latestBooking != null && "laundry".equals(latestBookingService().getId());
+        String contactLabel = "laundry_staff".equals(contactRole)
+                ? "Assigned Laundry Staff"
+                : (laundryBooking ? "Laundry Partner" : "Service Expert");
+        copy.addView(text(booked ? contactLabel : "Waiting for partner assignment", 12, MUTED, false), margin(-1, -2, 0, 3, 0, 2));
         copy.addView(text(booked ? "\u2605  4.8 (325 reviews)" : "Pending", 12, booked ? Color.rgb(230, 150, 35) : Color.rgb(210, 65, 65), true));
         card.addView(copy, new LinearLayout.LayoutParams(0, -2, 1));
 
@@ -8415,7 +9979,7 @@ public class MainActivity extends Activity {
 
     private void startPartnerCall(Booking booking) {
         if (booking == null || !isBookingAssigned(booking)) {
-            Toast.makeText(this, "Calling will be available after a service professional is assigned.", Toast.LENGTH_SHORT).show();
+            SafeToast.makeText(this, "Calling will be available after a service professional is assigned.", Toast.LENGTH_SHORT).show();
             return;
         }
         String bookingId = backendChatBookingId(booking);
@@ -8438,7 +10002,7 @@ public class MainActivity extends Activity {
                     public void onSuccess(JSONObject object) {
                         JSONObject remote = object.optJSONObject("booking");
                         if (remote == null) remote = object;
-                        String phone = remote.optString("partnerPhone", "");
+                        String phone = remote.optString("serviceContactPhone", remote.optString("partnerPhone", ""));
                         JSONObject snapshot = remote.optJSONObject("partnerSnapshot");
                         if (TextUtils.isEmpty(phone) && snapshot != null) phone = snapshot.optString("phone", "");
                         dialBookingParticipant(phone, "Service phone number unavailable");
@@ -8446,7 +10010,7 @@ public class MainActivity extends Activity {
 
                     @Override
                     public void onError(String ignored) {
-                        Toast.makeText(MainActivity.this, "Service phone number unavailable", Toast.LENGTH_LONG).show();
+                        SafeToast.makeText(MainActivity.this, "Service phone number unavailable", Toast.LENGTH_LONG).show();
                     }
                 });
             }
@@ -8460,13 +10024,13 @@ public class MainActivity extends Activity {
                 || clean.contains("*")
                 || lower.contains("protected")
                 || clean.replaceAll("\\D", "").length() < 6) {
-            Toast.makeText(this, missingMessage, Toast.LENGTH_LONG).show();
+            SafeToast.makeText(this, missingMessage, Toast.LENGTH_LONG).show();
             return;
         }
         try {
             startActivity(new Intent(Intent.ACTION_DIAL, Uri.parse("tel:" + Uri.encode(clean))));
         } catch (Exception error) {
-            Toast.makeText(this, "Unable to open the phone dialer.", Toast.LENGTH_LONG).show();
+            SafeToast.makeText(this, "Unable to open the phone dialer.", Toast.LENGTH_LONG).show();
         }
     }
 
@@ -8544,7 +10108,7 @@ public class MainActivity extends Activity {
         idText.setLetterSpacing(0.02f);
         idLine.addView(idText);
         TextView copy = text("  \u25A1", 14, MUTED, true);
-        copy.setOnClickListener(view -> Toast.makeText(this, "Booking ID copied", Toast.LENGTH_SHORT).show());
+        copy.setOnClickListener(view -> SafeToast.makeText(this, "Booking ID copied", Toast.LENGTH_SHORT).show());
         idLine.addView(copy);
         idBlock.addView(idLine, margin(-1, -2, 0, 2, 0, 0));
         idRow.addView(idBlock, new LinearLayout.LayoutParams(0, -2, 1));
@@ -8803,6 +10367,7 @@ public class MainActivity extends Activity {
     }
 
     private void startInfiniteRotation(View view, long durationMs) {
+        if (isConstrainedDevice()) return;
         ObjectAnimator animator = ObjectAnimator.ofFloat(view, View.ROTATION, 0f, 360f);
         animator.setDuration(durationMs);
         animator.setRepeatCount(ValueAnimator.INFINITE);
@@ -8933,7 +10498,7 @@ public class MainActivity extends Activity {
         TextView cancel = text("\u25A1  Cancel Booking", 15, ORANGE, true);
         cancel.setGravity(Gravity.CENTER);
         cancel.setBackground(stroke(Color.WHITE, ORANGE, dp(16)));
-        cancel.setOnClickListener(view -> Toast.makeText(this, "Cancellation support will confirm this request", Toast.LENGTH_SHORT).show());
+        cancel.setOnClickListener(view -> cancelCustomerBooking(null));
         addPressAnimation(cancel);
         card.addView(cancel, new LinearLayout.LayoutParams(-1, dp(52)));
         return card;
@@ -8944,7 +10509,7 @@ public class MainActivity extends Activity {
         button.setGravity(Gravity.CENTER);
         button.setSingleLine(true);
         button.setBackground(stroke(Color.WHITE, LINE, dp(14)));
-        button.setOnClickListener(view -> Toast.makeText(this, label + " support", Toast.LENGTH_SHORT).show());
+        button.setOnClickListener(view -> SafeToast.makeText(this, label + " support", Toast.LENGTH_SHORT).show());
         addPressAnimation(button);
         return button;
     }
@@ -9096,15 +10661,24 @@ public class MainActivity extends Activity {
             return;
         }
         List<String> activeIds = new ArrayList<>();
+        int realtimeCount = 0;
         for (Booking booking : bookings) {
             if (booking == null || TextUtils.isEmpty(booking.getId())) {
                 continue;
             }
             String bookingId = booking.getId();
-            activeIds.add(bookingId);
             if (!bookingStatusCache.containsKey(bookingId)) {
                 bookingStatusCache.put(bookingId, normalizeRemoteStatus(booking.getStatus()));
             }
+            String status = bookingStatusFor(booking);
+            // Completed/cancelled history is immutable and does not need two
+            // permanent database listeners per row. Keep live sync bounded to
+            // the most relevant active jobs; socket/API refresh covers the rest.
+            if ((!isPendingBookingStatus(status) && !isPresentBookingStatus(status)) || realtimeCount >= 8) {
+                continue;
+            }
+            realtimeCount++;
+            activeIds.add(bookingId);
             listenToBookingListFirestore(bookingId);
             listenToBookingListRealtime(bookingId);
         }
@@ -9259,9 +10833,29 @@ public class MainActivity extends Activity {
     }
 
     private void bookingLog(String event, String bookingId, String oldStatus, String newStatus, String source) {
-        Log.i(BOOKING_LOG, event + " bookingId=" + String.valueOf(bookingId)
+        Log.i(BOOKING_LOG, event + " bookingPresent=" + !TextUtils.isEmpty(bookingId)
                 + " old=" + String.valueOf(oldStatus) + " new=" + String.valueOf(newStatus)
                 + " source=" + String.valueOf(source));
+    }
+
+    /** Lightweight production breadcrumb: no booking ID, customer data, token or payment data. */
+    private void bookingBreadcrumb(String event, String status, String source) {
+        long now = SystemClock.elapsedRealtime();
+        String normalizedEvent = event == null ? "UNKNOWN" : event;
+        String normalizedStatus = normalizeRemoteStatus(status);
+        String value = normalizedEvent + "|" + normalizedStatus + "|" + (source == null ? "" : source);
+        // Listener callbacks can fan out through three transports. Preserve the useful transition,
+        // but never turn diagnostics themselves into a source of main-thread pressure.
+        if (value.equals(lastBookingBreadcrumb) && now - lastBookingBreadcrumbAt < 2_000L) {
+            return;
+        }
+        lastBookingBreadcrumb = value;
+        lastBookingBreadcrumbAt = now;
+        FirebaseCrashlytics crashlytics = FirebaseCrashlytics.getInstance();
+        crashlytics.setCustomKey("booking_flow_last_event", normalizedEvent);
+        crashlytics.setCustomKey("booking_flow_status", normalizedStatus);
+        crashlytics.log("booking_flow event=" + normalizedEvent + " status=" + normalizedStatus
+                + " source=" + (source == null ? "" : source));
     }
 
     private boolean shouldAcceptBookingStatusTransition(String previousStatus, String nextStatus) {
@@ -9535,9 +11129,9 @@ public class MainActivity extends Activity {
 
     private View myBookingsReferenceCard(Booking booking) {
         LinearLayout card = vertical();
-        card.setPadding(dp(16), dp(16), dp(16), dp(15));
-        card.setBackground(stroke(Color.rgb(255, 254, 251), Color.rgb(232, 220, 210), dp(16)));
-        card.setElevation(dp(5));
+        card.setPadding(dp(15), dp(15), dp(15), dp(13));
+        card.setBackground(stroke(Color.WHITE, Color.rgb(232, 229, 225), dp(22)));
+        card.setElevation(0f);
         card.setOnClickListener(view -> showBookingHistoryDetails(booking));
         addPressAnimation(card);
 
@@ -9545,86 +11139,216 @@ public class MainActivity extends Activity {
         boolean completed = isPastBookingStatus(currentStatus);
         boolean cancelled = isCancelledHistoryStatus(currentStatus);
         boolean pending = isPendingBookingStatus(currentStatus);
-        int statusColor = completed ? Color.rgb(7, 165, 91)
-                : cancelled ? Color.rgb(218, 59, 76)
-                : pending ? Color.rgb(221, 133, 26)
-                : Color.rgb(21, 116, 238);
-        int statusSoft = completed ? Color.rgb(224, 249, 238)
-                : cancelled ? Color.rgb(255, 235, 238)
-                : pending ? Color.rgb(255, 246, 222)
-                : Color.rgb(226, 240, 255);
+        boolean expired = "expired".equals(normalizeRemoteStatus(currentStatus));
+        boolean requestExpired = "request_expired".equals(normalizeRemoteStatus(currentStatus));
+        int statusColor = completed ? Color.rgb(5, 145, 92)
+                : cancelled ? Color.rgb(232, 55, 82)
+                : pending ? Color.rgb(31, 98, 224)
+                : Color.rgb(26, 100, 228);
+        int statusSoft = completed ? Color.rgb(235, 252, 245)
+                : cancelled ? Color.rgb(255, 241, 243)
+                : pending ? Color.rgb(239, 246, 255)
+                : Color.rgb(239, 246, 255);
+        int statusBorder = completed ? Color.rgb(177, 238, 209)
+                : cancelled ? Color.rgb(255, 199, 208)
+                : Color.rgb(191, 219, 254);
 
         Service service = primaryService(booking);
         LinearLayout top = horizontal();
-        top.setGravity(Gravity.CENTER_VERTICAL);
-        View logo = serviceLogoView(service, 68, true);
-        top.addView(logo, new LinearLayout.LayoutParams(dp(68), dp(68)));
+        top.setGravity(Gravity.TOP);
+        View logo = serviceLogoView(service, 56, true);
+        top.addView(logo, new LinearLayout.LayoutParams(dp(56), dp(56)));
 
         LinearLayout identity = vertical();
         identity.setGravity(Gravity.CENTER_VERTICAL);
-        TextView serviceName = text(service.getName(), 18, Color.rgb(18, 18, 20), true);
+        TextView serviceName = text(service.getName(), 15, Color.rgb(24, 33, 50), true);
         serviceName.setMaxLines(2);
         serviceName.setEllipsize(TextUtils.TruncateAt.END);
         identity.addView(serviceName);
-        TextView bookingCode = text(booking.getId(), 12, Color.rgb(105, 101, 99), false);
+        TextView bookingCode = text(booking.getId(), 10, Color.rgb(134, 150, 175), false);
         bookingCode.setSingleLine(true);
         bookingCode.setEllipsize(TextUtils.TruncateAt.END);
-        identity.addView(bookingCode, margin(-1, -2, 0, 5, 0, 0));
+        identity.addView(bookingCode, margin(-1, -2, 0, 3, 0, 0));
+        TextView scope = text(requestExpired ? "No partner accepted within 10 minutes"
+                        : expired ? "Not completed within 24 hours" : bookingTierLabel(booking), 11,
+                cancelled ? Color.rgb(234, 71, 93) : Color.rgb(83, 101, 128), false);
+        scope.setMaxLines(2);
+        scope.setEllipsize(TextUtils.TruncateAt.END);
+        identity.addView(scope, margin(-1, -2, 0, 4, 0, 0));
         LinearLayout.LayoutParams identityParams = new LinearLayout.LayoutParams(0, -2, 1);
-        identityParams.setMargins(dp(14), 0, dp(8), 0);
+        identityParams.setMargins(dp(13), 0, dp(8), 0);
         top.addView(identity, identityParams);
 
-        String statusLabel = completed ? "Completed"
-                : cancelled ? "Cancelled"
-                : pending ? "Pending"
+        String statusLabel = completed ? "✓  Completed"
+                : requestExpired ? "Expired"
+                : expired ? "Closed"
+                : cancelled ? "×  Cancelled"
+                : pending ? "Confirmed"
                 : readableBookingStatus(currentStatus);
-        TextView status = text(statusLabel, 12, statusColor, true);
+        TextView status = text(statusLabel, 10, statusColor, true);
         status.setGravity(Gravity.CENTER);
         status.setSingleLine(true);
-        status.setBackground(round(statusSoft, dp(16)));
-        top.addView(status, new LinearLayout.LayoutParams(dp(94), dp(34)));
+        status.setBackground(stroke(statusSoft, statusBorder, dp(15)));
+        top.addView(status, new LinearLayout.LayoutParams(dp(98), dp(30)));
         card.addView(top);
 
         View divider = new View(this);
-        divider.setBackgroundColor(Color.rgb(232, 220, 212));
-        card.addView(divider, margin(-1, 1, 0, 16, 0, 13));
-
-        TextView dateTitle = text("DATE & TIME", 10, Color.rgb(102, 98, 96), true);
-        dateTitle.setLetterSpacing(0.05f);
-        card.addView(dateTitle, margin(-1, -2, 0, 0, 0, 8));
+        divider.setBackgroundColor(Color.rgb(241, 239, 236));
+        card.addView(divider, margin(-1, 1, 0, 13, 0, 10));
 
         LinearLayout meta = horizontal();
         meta.setGravity(Gravity.CENTER_VERTICAL);
-        meta.addView(new BookingFindingArtworkView(BookingFindingArtworkView.CALENDAR, BOOKING_THEME), new LinearLayout.LayoutParams(dp(22), dp(22)));
-        TextView date = text(trackDateLabel(booking), 12, Color.rgb(23, 23, 24), true);
-        date.setSingleLine(true);
-        meta.addView(date, margin(-2, -2, 7, 0, 0, 0));
+        FrameLayout calendarBadge = new FrameLayout(this);
+        calendarBadge.setBackground(round(cancelled ? Color.rgb(243, 246, 250) : Color.rgb(255, 240, 243), dp(14)));
+        calendarBadge.addView(new BookingFindingArtworkView(BookingFindingArtworkView.CALENDAR,
+                cancelled ? Color.rgb(129, 148, 177) : BOOKING_THEME),
+                new FrameLayout.LayoutParams(dp(16), dp(16), Gravity.CENTER));
+        meta.addView(calendarBadge, new LinearLayout.LayoutParams(dp(28), dp(28)));
+        String scheduleText = requestExpired ? "Expired after 10 minutes"
+                : expired ? "Closed automatically after 24 hours"
+                : cancelled ? "Cancelled on " + trackDateLabel(booking)
+                : trackDateLabel(booking) + ", " + trackTimeLabel(booking);
+        TextView schedule = text(scheduleText, 11,
+                cancelled ? Color.rgb(100, 116, 139) : Color.rgb(58, 72, 94), true);
+        schedule.setSingleLine(true);
+        schedule.setEllipsize(TextUtils.TruncateAt.END);
+        schedule.setGravity(Gravity.CENTER_VERTICAL);
+        LinearLayout.LayoutParams scheduleParams = new LinearLayout.LayoutParams(0, dp(32), 1);
+        scheduleParams.setMargins(dp(7), 0, dp(8), 0);
+        meta.addView(schedule, scheduleParams);
 
-        View separator = new View(this);
-        separator.setBackgroundColor(Color.rgb(188, 174, 167));
-        meta.addView(separator, margin(1, 22, 10, 0, 10, 0));
-
-        meta.addView(new BookingFindingArtworkView(BookingFindingArtworkView.CLOCK, BOOKING_THEME), new LinearLayout.LayoutParams(dp(22), dp(22)));
-        TextView time = text(trackTimeLabel(booking), 12, Color.rgb(23, 23, 24), true);
-        time.setSingleLine(true);
-        time.setEllipsize(TextUtils.TruncateAt.END);
-        meta.addView(time, margin(0, -2, 7, 0, 4, 0, 1));
-
-        TextView details = text("View details  \u2192", 12, BOOKING_THEME, true);
+        if (cancelled) {
+            TextView help = text("Need Help?", 11, Color.rgb(100, 116, 139), true);
+            help.setGravity(Gravity.CENTER);
+            help.setOnClickListener(view -> showSupportChat("I need help with booking " + booking.getId()));
+            meta.addView(help, new LinearLayout.LayoutParams(dp(78), dp(32)));
+        }
+        if (completed) {
+            TextView invoice = text("Invoice", 10, Color.rgb(71, 85, 105), true);
+            invoice.setGravity(Gravity.CENTER);
+            invoice.setBackground(stroke(Color.WHITE, Color.rgb(226, 226, 230), dp(7)));
+            invoice.setOnClickListener(view -> showBookingInvoice(booking));
+            addPressAnimation(invoice);
+            LinearLayout.LayoutParams invoiceParams = new LinearLayout.LayoutParams(dp(62), dp(28));
+            invoiceParams.setMargins(0, dp(2), dp(7), dp(2));
+            meta.addView(invoice, invoiceParams);
+        }
+        TextView details = text((expired || cancelled) ? "Rebook  \u203a" : "View details  \u203a",
+                11, BOOKING_THEME, true);
         details.setGravity(Gravity.CENTER_VERTICAL | Gravity.RIGHT);
         details.setSingleLine(true);
-        details.setOnClickListener(view -> showBookingHistoryDetails(booking));
+        details.setOnClickListener(view -> {
+            if (expired || cancelled) retryExpiredBooking(booking); else showBookingHistoryDetails(booking);
+        });
         addPressAnimation(details);
-        meta.addView(details, new LinearLayout.LayoutParams(dp(92), dp(36)));
+        meta.addView(details, new LinearLayout.LayoutParams(dp(completed ? 90 : 102), dp(32)));
         card.addView(meta);
         return card;
+    }
+
+    private View myBookingsLiveCard(Booking booking) {
+        FrameLayout shell = new FrameLayout(this);
+        shell.setBackground(stroke(Color.WHITE, Color.rgb(255, 214, 220), dp(22)));
+        shell.setElevation(0f);
+        shell.setClipToOutline(true);
+        shell.setOnClickListener(view -> showBookingHistoryDetails(booking));
+        addPressAnimation(shell);
+
+        LinearLayout card = vertical();
+        card.setPadding(dp(15), dp(17), dp(15), dp(13));
+        shell.addView(card, new FrameLayout.LayoutParams(-1, -2));
+
+        GradientDrawable accentDrawable = new GradientDrawable(
+                GradientDrawable.Orientation.LEFT_RIGHT,
+                new int[]{Color.rgb(235, 32, 68), Color.rgb(249, 115, 22), Color.rgb(250, 190, 48)});
+        View accent = new View(this);
+        accent.setBackground(accentDrawable);
+        shell.addView(accent, new FrameLayout.LayoutParams(-1, dp(4), Gravity.TOP));
+
+        String statusValue = bookingStatusFor(booking);
+        Service service = primaryService(booking);
+        LinearLayout top = horizontal();
+        top.setGravity(Gravity.TOP);
+        top.addView(serviceLogoView(service, 56, true), new LinearLayout.LayoutParams(dp(56), dp(56)));
+
+        LinearLayout identity = vertical();
+        TextView title = text(service.getName(), 15, Color.rgb(24, 33, 50), true);
+        title.setMaxLines(2);
+        identity.addView(title);
+        TextView code = text(booking.getId(), 10, Color.rgb(134, 150, 175), false);
+        code.setSingleLine(true);
+        code.setEllipsize(TextUtils.TruncateAt.END);
+        identity.addView(code, margin(-1, -2, 0, 3, 0, 0));
+        LinearLayout.LayoutParams identityParams = new LinearLayout.LayoutParams(0, -2, 1);
+        identityParams.setMargins(dp(13), 0, dp(8), 0);
+        top.addView(identity, identityParams);
+
+        TextView state = text(readableBookingStatus(statusValue), 10, Color.rgb(194, 104, 15), true);
+        state.setGravity(Gravity.CENTER);
+        state.setSingleLine(true);
+        state.setBackground(stroke(Color.rgb(255, 250, 235), Color.rgb(251, 205, 94), dp(16)));
+        top.addView(state, new LinearLayout.LayoutParams(dp(100), dp(34)));
+        card.addView(top);
+
+        LinearLayout live = horizontal();
+        live.setGravity(Gravity.CENTER_VERTICAL);
+        live.setPadding(dp(10), dp(8), dp(8), dp(8));
+        live.setBackground(stroke(Color.rgb(255, 251, 235), Color.rgb(253, 230, 138), dp(14)));
+        TextView bolt = text("⚡", 14, Color.rgb(245, 95, 24), true);
+        bolt.setGravity(Gravity.CENTER);
+        bolt.setBackground(round(Color.WHITE, dp(17)));
+        live.addView(bolt, new LinearLayout.LayoutParams(dp(34), dp(34)));
+
+        String partner = bookingPartnerNameCache.get(booking.getId());
+        LinearLayout update = vertical();
+        update.addView(text(readableBookingStatus(statusValue), 12, Color.rgb(46, 58, 79), true));
+        update.addView(text(TextUtils.isEmpty(partner) ? "Your service professional is being updated"
+                        : "Partner: " + partner,
+                10, Color.rgb(100, 116, 139), false), margin(-1, -2, 0, 2, 0, 0));
+        LinearLayout.LayoutParams updateParams = new LinearLayout.LayoutParams(0, -2, 1);
+        updateParams.setMargins(dp(9), 0, dp(6), 0);
+        live.addView(update, updateParams);
+
+        TextView call = text("Call  ☎", 11, Color.WHITE, true);
+        call.setGravity(Gravity.CENTER);
+        call.setBackground(round(Color.rgb(238, 28, 64), dp(10)));
+        call.setOnClickListener(view -> startPartnerCall(booking));
+        addPressAnimation(call);
+        live.addView(call, new LinearLayout.LayoutParams(dp(72), dp(36)));
+        card.addView(live, margin(-1, -2, 0, 12, 0, 10));
+
+        View divider = new View(this);
+        divider.setBackgroundColor(Color.rgb(241, 239, 236));
+        card.addView(divider, margin(-1, 1, 0, 0, 0, 8));
+
+        LinearLayout footer = horizontal();
+        footer.setGravity(Gravity.CENTER_VERTICAL);
+        footer.addView(new BookingFindingArtworkView(BookingFindingArtworkView.CLOCK,
+                Color.rgb(100, 116, 139)), new LinearLayout.LayoutParams(dp(18), dp(18)));
+        TextView slot = text("Slot: " + trackDateLabel(booking) + ", " + trackTimeLabel(booking),
+                11, Color.rgb(100, 116, 139), false);
+        slot.setSingleLine(true);
+        slot.setEllipsize(TextUtils.TruncateAt.END);
+        slot.setGravity(Gravity.CENTER_VERTICAL);
+        footer.addView(slot, margin(0, -2, 6, 0, 0, 0, 1));
+        TextView track = text("Track Live  ›", 11, BOOKING_THEME, true);
+        track.setGravity(Gravity.CENTER_VERTICAL | Gravity.RIGHT);
+        track.setOnClickListener(view -> {
+            selectedTrackBookingId = booking.getId();
+            latestBooking = booking;
+            showTrack();
+        });
+        addPressAnimation(track);
+        footer.addView(track, new LinearLayout.LayoutParams(dp(88), dp(32)));
+        card.addView(footer);
+        return shell;
     }
 
     private View bookingHistoryCard(Booking booking, boolean live) {
         LinearLayout card = vertical();
         card.setPadding(dp(14), dp(13), dp(14), dp(13));
         card.setBackground(stroke(Color.WHITE, Color.rgb(242, 225, 224), dp(16)));
-        card.setElevation(dp(3));
+        card.setElevation(0f);
         card.setOnClickListener(view -> showBookingHistoryDetails(booking));
         addPressAnimation(card);
 
@@ -9694,10 +11418,10 @@ public class MainActivity extends Activity {
     private GradientDrawable bookingHistorySelectedFilterDrawable() {
         GradientDrawable drawable = new GradientDrawable(
                 GradientDrawable.Orientation.LEFT_RIGHT,
-                new int[]{Color.rgb(246, 132, 143), Color.rgb(214, 92, 110)}
+                new int[]{Color.rgb(239, 18, 61), Color.rgb(225, 22, 66)}
         );
         drawable.setCornerRadius(dp(23));
-        drawable.setStroke(dp(1), Color.rgb(248, 181, 188));
+        drawable.setStroke(dp(1), Color.rgb(239, 18, 61));
         return drawable;
     }
 
@@ -9708,6 +11432,90 @@ public class MainActivity extends Activity {
         );
         drawable.setCornerRadius(dp(14));
         return drawable;
+    }
+
+    private void showBookingInvoice(Booking booking) {
+        if (booking == null) return;
+        setCurrentScreen("booking_invoice");
+        showAppChrome();
+        setActiveNav(navBookings);
+        resetScreen();
+        floatingFooter.setVisibility(View.GONE);
+        bottomNav.setVisibility(View.GONE);
+        screenContent.setBackgroundColor(Color.rgb(248, 246, 240));
+
+        LinearLayout top = horizontal();
+        top.setGravity(Gravity.CENTER_VERTICAL);
+        top.setPadding(dp(18), dp(14), dp(18), dp(12));
+        TextView back = text("\u2039", 30, BOOKING_THEME, false);
+        back.setGravity(Gravity.CENTER);
+        back.setBackground(stroke(Color.WHITE, Color.rgb(231, 229, 226), dp(20)));
+        back.setElevation(0f);
+        back.setOnClickListener(view -> showBookingsList());
+        addPressAnimation(back);
+        top.addView(back, new LinearLayout.LayoutParams(dp(40), dp(40)));
+        TextView title = text("Invoice", 20, Color.rgb(18, 24, 38), true);
+        title.setGravity(Gravity.CENTER);
+        top.addView(title, new LinearLayout.LayoutParams(0, dp(40), 1));
+        TextView done = text("Done", 12, BOOKING_THEME, true);
+        done.setGravity(Gravity.CENTER);
+        done.setOnClickListener(view -> showBookingsList());
+        top.addView(done, new LinearLayout.LayoutParams(dp(52), dp(40)));
+        screenContent.addView(top);
+
+        LinearLayout invoice = vertical();
+        invoice.setPadding(dp(18), dp(18), dp(18), dp(18));
+        invoice.setBackground(stroke(Color.WHITE, Color.rgb(226, 226, 224), dp(20)));
+        invoice.setElevation(0f);
+
+        LinearLayout brand = horizontal();
+        brand.setGravity(Gravity.CENTER_VERTICAL);
+        TextView mark = text("A", 19, Color.WHITE, true);
+        mark.setGravity(Gravity.CENTER);
+        mark.setBackground(round(BOOKING_THEME, dp(16)));
+        brand.addView(mark, new LinearLayout.LayoutParams(dp(42), dp(42)));
+        LinearLayout brandCopy = vertical();
+        brandCopy.setPadding(dp(11), 0, 0, 0);
+        brandCopy.addView(text("ApnaServo", 18, Color.rgb(18, 24, 38), true));
+        brandCopy.addView(text("Service invoice", 11, Color.rgb(100, 116, 139), false));
+        brand.addView(brandCopy, new LinearLayout.LayoutParams(0, -2, 1));
+        TextView paid = text("PAID", 10, Color.rgb(5, 145, 92), true);
+        paid.setGravity(Gravity.CENTER);
+        paid.setBackground(stroke(Color.rgb(235, 252, 245), Color.rgb(177, 238, 209), dp(14)));
+        brand.addView(paid, new LinearLayout.LayoutParams(dp(62), dp(30)));
+        invoice.addView(brand);
+        invoice.addView(insetDivider(0), margin(-1, 1, 0, 16, 0, 14));
+
+        Service service = primaryService(booking);
+        invoice.addView(historyDetailRow(BookingFindingArtworkView.COPY, "Invoice / Booking ID", booking.getId()));
+        invoice.addView(insetDivider(48));
+        invoice.addView(historyDetailRow(BookingFindingArtworkView.SERVICE, "Service", service.getName()));
+        invoice.addView(insetDivider(48));
+        invoice.addView(historyDetailRow(BookingFindingArtworkView.CALENDAR, "Completed booking", trackDateLabel(booking) + ", " + trackTimeLabel(booking)));
+        invoice.addView(insetDivider(48));
+        invoice.addView(historyDetailRow(BookingFindingArtworkView.LOCATION, "Service address", booking.getCustomerDetails().getAddress()));
+
+        int amount = booking.getTotal();
+        if (amount <= 0) {
+            try {
+                amount = Integer.parseInt(secureString(finalAmountPreferenceKey(booking.getId()), "0"));
+            } catch (NumberFormatException ignored) {
+                amount = 0;
+            }
+        }
+        invoice.addView(insetDivider(0), margin(-1, 1, 0, 14, 0, 14));
+        LinearLayout total = horizontal();
+        total.setGravity(Gravity.CENTER_VERTICAL);
+        total.addView(text("Total paid", 14, Color.rgb(71, 85, 105), true), new LinearLayout.LayoutParams(0, -2, 1));
+        total.addView(text(amount > 0 ? "\u20B9" + amount : "Not recorded", 20,
+                amount > 0 ? Color.rgb(18, 24, 38) : Color.rgb(100, 116, 139), true));
+        invoice.addView(total);
+        screenContent.addView(invoice, margin(-1, -2, 18, 8, 18, 14));
+
+        TextView note = text("This invoice is generated from the completed booking record. Keep the booking ID for support.",
+                11, Color.rgb(100, 116, 139), false);
+        note.setGravity(Gravity.CENTER);
+        screenContent.addView(note, margin(-1, -2, 28, 0, 28, 18));
     }
 
     private void showBookingHistoryDetails(Booking booking) {
@@ -9736,9 +11544,9 @@ public class MainActivity extends Activity {
         TextView heading = text("Booking Details", 19, BLACK, true);
         heading.setGravity(Gravity.CENTER);
         top.addView(heading, new LinearLayout.LayoutParams(0, dp(46), 1));
-        TextView secure = text("◇  Secure", 10, BOOKING_THEME, true);
+        TextView secure = text("✓  Secure", 10, Color.rgb(20, 139, 82), true);
         secure.setGravity(Gravity.CENTER);
-        secure.setBackground(stroke(Color.WHITE, Color.rgb(245, 225, 230), dp(14)));
+        secure.setBackground(stroke(Color.rgb(239, 250, 244), Color.rgb(185, 225, 202), dp(14)));
         top.addView(secure, new LinearLayout.LayoutParams(dp(80), dp(40)));
         screenContent.addView(top);
 
@@ -9782,6 +11590,10 @@ public class MainActivity extends Activity {
         screenContent.addView(card, margin(-1, -2, 18, 4, 18, 14));
 
         if (!isBookingClosed(booking)) {
+            screenContent.addView(bookingIssueEditor(booking), margin(-1, -2, 18, 0, 18, 14));
+        }
+
+        if (!isBookingClosed(booking)) {
             TextView track = text("Track Booking  →", 15, Color.WHITE, true);
             track.setGravity(Gravity.CENTER);
             track.setBackground(bookGlowButtonDrawable());
@@ -9789,13 +11601,115 @@ public class MainActivity extends Activity {
             addPressAnimation(track);
             screenContent.addView(track, margin(-1, 54, 18, 0, 18, 12));
         }
+        if ("expired".equals(normalizeRemoteStatus(statusValue))) {
+            TextView retry = text("Retry Booking  →", 15, Color.WHITE, true);
+            retry.setGravity(Gravity.CENTER);
+            retry.setBackground(bookGlowButtonDrawable());
+            retry.setOnClickListener(view -> retryExpiredBooking(booking));
+            addPressAnimation(retry);
+            screenContent.addView(retry, margin(-1, 54, 18, 0, 18, 12));
+        }
         screenContent.addView(bookingHelpActions(booking), margin(-1, -2, 18, 0, 18, 14));
-        TextView bookAgain = text("▣  Book Again", 15, Color.WHITE, true);
-        bookAgain.setGravity(Gravity.CENTER);
-        bookAgain.setBackground(bookGlowButtonDrawable());
-        bookAgain.setOnClickListener(view -> showBooking(primaryService(booking)));
-        addPressAnimation(bookAgain);
-        screenContent.addView(bookAgain, margin(-1, 56, 18, 0, 18, 24));
+    }
+
+    private void retryExpiredBooking(Booking booking) {
+        if (booking == null) return;
+        Service service = primaryService(booking);
+        selectedService = service;
+        selectedTrackBookingId = "";
+        pendingBooking = null;
+        bookingSubmissionInFlight = false;
+        SafeToast.makeText(this, "Review the details and confirm your new booking.", Toast.LENGTH_SHORT).show();
+        showBooking(service);
+    }
+
+    private View bookingIssueEditor(Booking booking) {
+        LinearLayout card = vertical();
+        card.setPadding(dp(16), dp(14), dp(16), dp(14));
+        card.setBackground(stroke(Color.WHITE, Color.rgb(244, 226, 231), dp(18)));
+        card.setElevation(dp(2));
+        card.addView(text("Issue or problem (Optional)", 15, BLACK, true));
+        card.addView(text("Add useful details for the assigned service partner.", 11, MUTED, false),
+                margin(-1, -2, 0, 3, 0, 10));
+
+        EditText input = new EditText(this);
+        input.setHint("Type the issue, location in the home, or special instruction...");
+        input.setHintTextColor(Color.rgb(153, 145, 148));
+        input.setTextColor(BLACK);
+        input.setTextSize(13);
+        input.setGravity(Gravity.TOP | Gravity.START);
+        input.setSingleLine(false);
+        input.setMinLines(3);
+        input.setMaxLines(5);
+        input.setFilters(new InputFilter[]{new InputFilter.LengthFilter(500)});
+        input.setPadding(dp(13), dp(11), dp(13), dp(11));
+        input.setBackground(stroke(Color.rgb(255, 252, 252), Color.rgb(236, 207, 214), dp(12)));
+        card.addView(input, new LinearLayout.LayoutParams(-1, dp(94)));
+
+        TextView save = text("Save issue", 13, Color.WHITE, true);
+        save.setGravity(Gravity.CENTER);
+        save.setBackground(bookGlowButtonDrawable());
+        save.setOnClickListener(view -> saveBookingIssue(booking, input, save));
+        addPressAnimation(save);
+        card.addView(save, margin(-1, 46, 0, 10, 0, 0));
+        return card;
+    }
+
+    private void saveBookingIssue(Booking booking, EditText input, TextView save) {
+        if (booking == null || backendClient == null || input == null || save == null) return;
+        String note = input.getText().toString().trim();
+        if (note.isEmpty()) {
+            SafeToast.makeText(this, "Issue is optional. Type something before saving.", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        if (!isNetworkOnline()) {
+            SafeToast.makeText(this, "Connect to the internet to save this issue.", Toast.LENGTH_LONG).show();
+            return;
+        }
+        save.setEnabled(false);
+        save.setText("Saving...");
+        backendClient.updateBookingIssue(booking.getId(), note, new BackendClient.JsonCallback() {
+            @Override public void onSuccess(JSONObject object) {
+                finishBookingIssueSave(booking, note, input, save);
+            }
+
+            @Override public void onError(String message) {
+                // Backward-compatible delivery while older backend instances roll over:
+                // booking chat is persisted and immediately delivered to the assigned partner.
+                backendClient.sendBookingChatMessage(
+                        booking.getId(),
+                        "Booking issue update: " + note,
+                        "issue-" + booking.getId() + "-" + System.currentTimeMillis(),
+                        new BackendClient.JsonCallback() {
+                            @Override public void onSuccess(JSONObject object) {
+                                finishBookingIssueSave(booking, note, input, save);
+                            }
+
+                            @Override public void onError(String fallbackMessage) {
+                                save.setEnabled(true);
+                                save.setText("Save issue");
+                                SafeToast.makeText(MainActivity.this,
+                                        NetworkError.body(NetworkError.safe(fallbackMessage)), Toast.LENGTH_LONG).show();
+                            }
+                        });
+            }
+        });
+    }
+
+    private void finishBookingIssueSave(Booking booking, String note, EditText input, TextView save) {
+        CustomerDetails old = booking.getCustomerDetails();
+        CustomerDetails nextDetails = new CustomerDetails(
+                old.getName(), old.getPhone(), old.getAlternatePhone(), old.getAddress(), note, old.getSlot());
+        Booking updated = booking.withCustomerDetails(nextDetails);
+        latestBooking = updated;
+        bookingStore.save(updated);
+        input.setText("");
+        save.setEnabled(true);
+        save.setText("Saved ✓");
+        SafeToast.makeText(this, "Issue shared with the service partner", Toast.LENGTH_SHORT).show();
+        carouselHandler.postDelayed(() -> {
+            if (save.getParent() != null) save.setText("Save issue");
+        }, 1400L);
     }
 
     private View historyDetailRow(int icon, String label, String value) {
@@ -9883,19 +11797,19 @@ public class MainActivity extends Activity {
             String primaryPhone = normalizeCustomerPhoneInput(primary.getText().toString());
             String alternatePhone = normalizeCustomerPhoneInput(alternate.getText().toString());
             if (!isValidCustomerMobile(primaryPhone)) {
-                Toast.makeText(this, "Enter a valid primary number", Toast.LENGTH_SHORT).show();
+                SafeToast.makeText(this, "Enter a valid primary number", Toast.LENGTH_SHORT).show();
                 return;
             }
             if (!TextUtils.isEmpty(alternatePhone) && !isValidCustomerMobile(alternatePhone)) {
-                Toast.makeText(this, "Enter a valid alternate number", Toast.LENGTH_SHORT).show();
+                SafeToast.makeText(this, "Enter a valid alternate number", Toast.LENGTH_SHORT).show();
                 return;
             }
             if (primaryPhone.equals(alternatePhone)) {
-                Toast.makeText(this, "Primary and alternate numbers must be different", Toast.LENGTH_SHORT).show();
+                SafeToast.makeText(this, "Primary and alternate numbers must be different", Toast.LENGTH_SHORT).show();
                 return;
             }
             if (!isNetworkOnline()) {
-                Toast.makeText(this, "Connection Lost. Contact update was not confirmed.", Toast.LENGTH_LONG).show();
+                SafeToast.makeText(this, "Connection Lost. Contact update was not confirmed.", Toast.LENGTH_LONG).show();
                 return;
             }
             save.setEnabled(false);
@@ -9905,12 +11819,12 @@ public class MainActivity extends Activity {
                     dialog.dismiss();
                     putSecureString(KEY_CUSTOMER_PHONE, primaryPhone);
                     applyConfirmedBookingMutation(object, booking);
-                    Toast.makeText(MainActivity.this, "Contact numbers updated", Toast.LENGTH_SHORT).show();
+                    SafeToast.makeText(MainActivity.this, "Contact numbers updated", Toast.LENGTH_SHORT).show();
                 }
                 @Override public void onError(String message) {
                     save.setEnabled(true);
                     save.setText("Save Contact Numbers");
-                    Toast.makeText(MainActivity.this, NetworkError.body(NetworkError.safe(message)), Toast.LENGTH_LONG).show();
+                    SafeToast.makeText(MainActivity.this, NetworkError.body(NetworkError.safe(message)), Toast.LENGTH_LONG).show();
                 }
             });
         });
@@ -9942,11 +11856,11 @@ public class MainActivity extends Activity {
         save.setOnClickListener(view -> {
             String updatedAddress = address.getText().toString().trim();
             if (updatedAddress.length() < 10) {
-                Toast.makeText(this, "Enter the complete service address", Toast.LENGTH_SHORT).show();
+                SafeToast.makeText(this, "Enter the complete service address", Toast.LENGTH_SHORT).show();
                 return;
             }
             if (!isNetworkOnline()) {
-                Toast.makeText(this, "Connection Lost. Your location update couldn't be confirmed. Please check your internet connection and try again.", Toast.LENGTH_LONG).show();
+                SafeToast.makeText(this, "Connection Lost. Your location update couldn't be confirmed. Please check your internet connection and try again.", Toast.LENGTH_LONG).show();
                 return;
             }
             save.setEnabled(false);
@@ -9965,12 +11879,12 @@ public class MainActivity extends Activity {
                     @Override public void onSuccess(JSONObject object) {
                         dialog.dismiss();
                         applyConfirmedBookingMutation(object, booking);
-                        Toast.makeText(MainActivity.this, "Service location updated", Toast.LENGTH_SHORT).show();
+                        SafeToast.makeText(MainActivity.this, "Service location updated", Toast.LENGTH_SHORT).show();
                     }
                     @Override public void onError(String message) {
                         save.setEnabled(true);
                         save.setText("Confirm Updated Location");
-                        Toast.makeText(MainActivity.this, "Location update wasn't confirmed. " + NetworkError.body(NetworkError.safe(message)), Toast.LENGTH_LONG).show();
+                        SafeToast.makeText(MainActivity.this, "Location update wasn't confirmed. " + NetworkError.body(NetworkError.safe(message)), Toast.LENGTH_LONG).show();
                         backendClient.getBooking(booking.getId(), new BackendClient.JsonCallback() {
                             @Override public void onSuccess(JSONObject object) { applyConfirmedBookingMutation(object, booking); }
                             @Override public void onError(String ignored) { }
@@ -10028,6 +11942,7 @@ public class MainActivity extends Activity {
     private String readableHistoryDetailStatus(String status) {
         String value = normalizeRemoteStatus(status);
         if ("completed".equals(value)) return "Completed";
+        if ("expired".equals(value)) return "Expired";
         if ("cancelled".equals(value) || "rejected".equals(value)) return "Cancelled";
         return readableBookingStatus(value);
     }
@@ -10035,6 +11950,7 @@ public class MainActivity extends Activity {
     private int historyDetailStatusColor(String status) {
         String value = normalizeRemoteStatus(status);
         if ("completed".equals(value)) return GREEN;
+        if ("expired".equals(value)) return Color.rgb(218, 59, 76);
         if ("cancelled".equals(value) || "rejected".equals(value)) return Color.rgb(218, 59, 76);
         return BOOKING_THEME;
     }
@@ -10042,6 +11958,7 @@ public class MainActivity extends Activity {
     private int historyDetailStatusSoftColor(String status) {
         String value = normalizeRemoteStatus(status);
         if ("completed".equals(value)) return Color.rgb(226, 249, 238);
+        if ("expired".equals(value)) return Color.rgb(255, 235, 238);
         if ("cancelled".equals(value) || "rejected".equals(value)) return Color.rgb(255, 235, 238);
         return BOOKING_THEME_SOFT;
     }
@@ -10095,6 +12012,7 @@ public class MainActivity extends Activity {
 
     private String readableBookingStatus(String status) {
         String value = normalizeRemoteStatus(status);
+        if ("expired".equals(value)) return "Expired";
         if ("accepted".equals(value)) return "Accepted";
         if ("on_the_way".equals(value)) return "On the way";
         if ("arrived".equals(value)) return "Arrived";
@@ -10174,11 +12092,11 @@ public class MainActivity extends Activity {
         center.addView(subtitle, margin(-1, -2, 0, 2, 0, 0));
         header.addView(center, new FrameLayout.LayoutParams(-1, -2, Gravity.CENTER));
 
-        TextView secure = text("\u25C7  Secure", 10, BOOKING_THEME, true);
+        TextView secure = text("✓  Secure", 10, Color.rgb(20, 139, 82), true);
         secure.setGravity(Gravity.CENTER);
         secure.setSingleLine(true);
-        secure.setBackground(stroke(Color.WHITE, Color.rgb(248, 225, 229), dp(14)));
-        secure.setElevation(dp(3));
+        secure.setBackground(stroke(Color.rgb(239, 250, 244), Color.rgb(185, 225, 202), dp(14)));
+        secure.setElevation(0);
         FrameLayout.LayoutParams secureParams = new FrameLayout.LayoutParams(dp(86), dp(40), Gravity.RIGHT | Gravity.CENTER_VERTICAL);
         header.addView(secure, secureParams);
         screenContent.addView(header);
@@ -10446,7 +12364,7 @@ public class MainActivity extends Activity {
             for (int index = start; index < Math.min(items.length, start + 3); index++) {
                 String item = items[index];
                 FrameLayout card = laundryItemCard(item);
-                row.addView(card, margin(0, 104, 4, 0, 4, 8, 1));
+                row.addView(card, margin(0, 112, 4, 0, 4, 8, 1));
             }
             for (int index = Math.min(items.length, start + 3); index < start + 3; index++) {
                 row.addView(new View(this), new LinearLayout.LayoutParams(0, dp(104), 1));
@@ -10459,8 +12377,7 @@ public class MainActivity extends Activity {
         selectedCard.setBackground(stroke(Color.rgb(255, 252, 253), Color.rgb(247, 219, 228), dp(14)));
         LinearLayout selectedHeader = horizontal();
         selectedHeader.setGravity(Gravity.CENTER_VERTICAL);
-        selectedHeader.addView(new LaundryBookingIconView("folded"), new LinearLayout.LayoutParams(dp(24), dp(24)));
-        selectedHeader.addView(text("Selected Items", 13, BLACK, true), margin(0, -2, 8, 0, 0, 0, 1));
+        selectedHeader.addView(text("Selected Items", 13, BLACK, true), margin(0, -2, 0, 0, 0, 0, 1));
         laundrySelectedItemsBadge = text("0 selected", 9, BOOKING_THEME, true);
         laundrySelectedItemsBadge.setGravity(Gravity.CENTER);
         laundrySelectedItemsBadge.setPadding(dp(9), dp(4), dp(9), dp(4));
@@ -10473,7 +12390,7 @@ public class MainActivity extends Activity {
         addMore.setGravity(Gravity.CENTER);
         addMore.setPadding(dp(8), dp(8), dp(8), dp(8));
         addMore.setBackground(stroke(Color.rgb(255, 252, 253), Color.rgb(247, 190, 208), dp(10)));
-        addMore.setOnClickListener(view -> Toast.makeText(this, "Select an item above to add it", Toast.LENGTH_SHORT).show());
+        addMore.setOnClickListener(view -> SafeToast.makeText(this, "Select an item above to add it", Toast.LENGTH_SHORT).show());
         selectedCard.addView(addMore, new LinearLayout.LayoutParams(-1, dp(38)));
         section.addView(selectedCard, margin(-1, -2, 0, 12, 0, 10));
         refreshLaundryItemSelection();
@@ -10489,8 +12406,7 @@ public class MainActivity extends Activity {
         problemInput.setBackground(stroke(Color.rgb(255, 244, 247), Color.rgb(255, 235, 241), dp(12)));
         LinearLayout instructionHeading = horizontal();
         instructionHeading.setGravity(Gravity.CENTER_VERTICAL);
-        instructionHeading.addView(new LaundryBookingIconView("folded"), new LinearLayout.LayoutParams(dp(24), dp(24)));
-        instructionHeading.addView(text("Any special instructions? (Optional)", 11, BLACK, true), margin(0, -2, 8, 0, 0, 0, 1));
+        instructionHeading.addView(text("Any special instructions? (Optional)", 11, BLACK, true), margin(0, -2, 0, 0, 0, 0, 1));
         section.addView(instructionHeading, margin(-1, -2, 0, 12, 0, 4));
         section.addView(problemInput, new LinearLayout.LayoutParams(-1, dp(62)));
         if (bookingForm != null) {
@@ -10499,14 +12415,91 @@ public class MainActivity extends Activity {
         }
     }
 
+    private void addRemoteBookingFields(Service service) {
+        if (service == null || appControl == null || bookingForm == null) return;
+        JSONArray fields = appControl.formFields(service.getId());
+        if (fields.length() == 0) return;
+        LinearLayout section = vertical();
+        section.setPadding(0, dp(12), 0, dp(8));
+        section.addView(text("Additional details", 14, BLACK, true));
+        section.addView(text("Provide the information required for this service", 11, MUTED, false), margin(-1, -2, 0, 3, 0, 10));
+        for (int i = 0; i < Math.min(fields.length(), 60); i++) {
+            JSONObject field = fields.optJSONObject(i);
+            if (field == null || !field.optBoolean("visible", true)) continue;
+            String id = field.optString("id", "").trim();
+            String label = field.optString("label", "").trim();
+            if (id.isEmpty() || label.isEmpty() || remoteBookingInputs.containsKey(id)) continue;
+            boolean required = field.optBoolean("required", false);
+            section.addView(text(label + (required ? " *" : ""), 11, BLACK, true), margin(-1, -2, 0, 4, 0, 5));
+            EditText input = new EditText(this);
+            String placeholder = field.optString("placeholder", "").trim();
+            JSONArray options = field.optJSONArray("options");
+            if (TextUtils.isEmpty(placeholder) && options != null && options.length() > 0) {
+                List<String> labels = new ArrayList<>();
+                for (int option = 0; option < options.length(); option++) labels.add(options.optString(option));
+                placeholder = "Choose: " + TextUtils.join(", ", labels);
+            }
+            input.setHint(placeholder);
+            input.setText(field.optString("defaultValue", ""));
+            input.setTextSize(12);
+            input.setTextColor(BLACK);
+            input.setHintTextColor(Color.rgb(145, 140, 142));
+            input.setPadding(dp(13), dp(9), dp(13), dp(9));
+            input.setBackground(stroke(Color.WHITE, Color.rgb(231, 224, 225), dp(11)));
+            String type = field.optString("type", "text");
+            if ("number".equals(type) || "phone".equals(type)) input.setInputType(android.text.InputType.TYPE_CLASS_NUMBER);
+            else if ("email".equals(type)) input.setInputType(android.text.InputType.TYPE_CLASS_TEXT | android.text.InputType.TYPE_TEXT_VARIATION_EMAIL_ADDRESS);
+            else if ("textarea".equals(type) || "address".equals(type)) { input.setSingleLine(false); input.setMinLines(2); }
+            else input.setSingleLine(true);
+            input.setTag(field);
+            remoteBookingInputs.put(id, input);
+            section.addView(input, new LinearLayout.LayoutParams(-1, "textarea".equals(type) || "address".equals(type) ? dp(64) : dp(48)));
+            String help = field.optString("helpText", "").trim();
+            if (!help.isEmpty()) section.addView(text(help, 9, MUTED, false), margin(-1, -2, 0, 4, 0, 8));
+            else section.addView(new View(this), new LinearLayout.LayoutParams(1, dp(8)));
+        }
+        if (!remoteBookingInputs.isEmpty()) {
+            bookingForm.addView(insetDivider(0));
+            bookingForm.addView(section);
+        }
+    }
+
+    private String remoteBookingValidationError() {
+        for (Map.Entry<String, EditText> entry : remoteBookingInputs.entrySet()) {
+            JSONObject field = entry.getValue().getTag() instanceof JSONObject ? (JSONObject) entry.getValue().getTag() : null;
+            String value = entry.getValue().getText().toString().trim();
+            if (field != null && field.optBoolean("required", false) && value.isEmpty()) return "Please enter " + field.optString("label", "required detail");
+            JSONObject validation = field == null ? null : field.optJSONObject("validation");
+            if (!value.isEmpty() && validation != null) {
+                int min = validation.optInt("minLength", 0), max = validation.optInt("maxLength", 1000);
+                if (value.length() < min) return field.optString("label", "Field") + " is too short";
+                if (value.length() > max) return field.optString("label", "Field") + " is too long";
+            }
+        }
+        return "";
+    }
+
+    private JSONObject remoteBookingAnswers() {
+        JSONObject answers = new JSONObject();
+        for (Map.Entry<String, EditText> entry : remoteBookingInputs.entrySet()) {
+            try { answers.put(entry.getKey(), entry.getValue().getText().toString().trim()); } catch (Exception ignored) { }
+        }
+        return answers;
+    }
+
     private LinearLayout laundryServiceTypeOption(String label, String icon) {
         LinearLayout option = vertical();
         option.setTag(label);
         option.setGravity(Gravity.CENTER);
         option.setPadding(dp(4), dp(5), dp(4), dp(4));
         FrameLayout artwork = new FrameLayout(this);
-        artwork.addView(new LaundryBookingIconView(icon), new FrameLayout.LayoutParams(dp(40), dp(40), Gravity.CENTER));
-        option.addView(artwork, new LinearLayout.LayoutParams(dp(48), dp(48)));
+        ImageView serviceImage = new ImageView(this);
+        serviceImage.setImageResource(laundryServiceTypeImage(icon));
+        serviceImage.setScaleType(ImageView.ScaleType.CENTER_CROP);
+        serviceImage.setClipToOutline(true);
+        serviceImage.setBackground(round(Color.WHITE, dp(20)));
+        artwork.addView(serviceImage, new FrameLayout.LayoutParams(dp(46), dp(46), Gravity.CENTER));
+        option.addView(artwork, new LinearLayout.LayoutParams(dp(52), dp(52)));
         TextView title = text(label, 9, BLACK, true);
         title.setGravity(Gravity.CENTER);
         title.setMaxLines(2);
@@ -10516,12 +12509,19 @@ public class MainActivity extends Activity {
         return option;
     }
 
+    private int laundryServiceTypeImage(String type) {
+        if ("dry_clean".equals(type)) return R.drawable.laundry_type_dry_clean_v1;
+        if ("iron".equals(type)) return R.drawable.laundry_type_ironing_v1;
+        if ("wash_iron".equals(type)) return R.drawable.laundry_type_wash_iron_v1;
+        return R.drawable.laundry_type_wash_fold_v1;
+    }
+
     private void styleLaundryServiceTypeOption(LinearLayout option, boolean selected) {
         option.setBackground(stroke(selected ? Color.rgb(255, 244, 247) : Color.WHITE,
                 selected ? BOOKING_THEME : Color.rgb(238, 230, 232), dp(12)));
-        option.setElevation(selected ? dp(3) : dp(1));
+        option.setElevation(0f);
         if (option.getChildCount() > 0 && option.getChildAt(0) instanceof FrameLayout) {
-            option.getChildAt(0).setBackground(round(selected ? Color.rgb(255, 225, 234) : Color.rgb(255, 248, 250), dp(24)));
+            option.getChildAt(0).setBackground(round(selected ? Color.rgb(255, 238, 243) : Color.rgb(250, 249, 248), dp(24)));
         }
     }
 
@@ -10548,10 +12548,10 @@ public class MainActivity extends Activity {
         LinearLayout content = vertical();
         content.setGravity(Gravity.CENTER_HORIZONTAL);
         FrameLayout artwork = new FrameLayout(this);
-        artwork.setBackground(round(Color.rgb(255, 242, 246), dp(26)));
-        View image = laundryItemVisual(item, 46);
-        artwork.addView(image, new FrameLayout.LayoutParams(dp(46), dp(46), Gravity.CENTER));
-        content.addView(artwork, new LinearLayout.LayoutParams(dp(56), dp(56)));
+        artwork.setBackground(round(Color.rgb(250, 249, 248), dp(29)));
+        View image = laundryItemVisual(item, 54);
+        artwork.addView(image, new FrameLayout.LayoutParams(dp(54), dp(54), Gravity.CENTER));
+        content.addView(artwork, new LinearLayout.LayoutParams(dp(62), dp(62)));
         TextView label = text(laundryItemDisplayName(item), 10, BLACK, true);
         label.setGravity(Gravity.CENTER);
         label.setMaxLines(2);
@@ -10576,9 +12576,15 @@ public class MainActivity extends Activity {
     }
 
     private View laundryItemVisual(String item, int size) {
-        // Keep the selector visually consistent and lightweight. The previous photorealistic
-        // generated PNGs varied in style and used considerably more memory on low-end devices.
-        return new LaundryBookingIconView(laundryItemIconType(item));
+        LaundryItemCatalogView image = new LaundryItemCatalogView(laundryItemCatalogIndex(item));
+        image.setContentDescription(laundryItemDisplayName(item));
+        return image;
+    }
+
+    private int laundryItemCatalogIndex(String item) {
+        String[] items = laundryBookingItems();
+        for (int i = 0; i < items.length; i++) if (items[i].equals(item)) return i;
+        return 13;
     }
 
     private String laundryItemDisplayName(String item) {
@@ -10601,6 +12607,7 @@ public class MainActivity extends Activity {
         if ("Suit / Kurta".equals(item)) return "laundry_item_kurta";
         if ("Jacket".equals(item)) return "laundry_item_jacket";
         if ("Shoes".equals(item)) return "laundry_item_shoes";
+        if ("Others".equals(item)) return "laundry_item_others";
         return "";
     }
 
@@ -10676,9 +12683,9 @@ public class MainActivity extends Activity {
     }
 
     private void styleLaundryItemCard(FrameLayout card, boolean selected) {
-        card.setBackground(stroke(selected ? Color.rgb(255, 246, 249) : Color.WHITE,
-                selected ? BOOKING_THEME : Color.rgb(239, 230, 232), dp(9)));
-        card.setElevation(selected ? dp(3) : dp(1));
+        card.setBackground(stroke(selected ? Color.rgb(255, 247, 249) : Color.WHITE,
+                selected ? BOOKING_THEME : Color.rgb(231, 226, 227), dp(12)));
+        card.setElevation(0f);
         Object tag = card.getTag();
         if (tag instanceof TextView) ((TextView) tag).setVisibility(selected ? View.VISIBLE : View.GONE);
     }
@@ -10729,6 +12736,74 @@ public class MainActivity extends Activity {
         if (bookingForm != null) {
             bookingForm.addView(section);
             bookingForm.addView(insetDivider(0));
+        }
+    }
+
+    /** Published cleaning packages are display-only estimates. No payment is
+     * collected here; the server records the selected package independently. */
+    private void addRemoteCleaningPricing(Service service) {
+        if (service == null || appControl == null || bookingForm == null) return;
+        JSONObject pricing = appControl.formSchema(service.getId()).optJSONObject("pricing");
+        if (pricing == null || !pricing.optBoolean("enabled", false)) return;
+        JSONArray options = pricing.optJSONArray("options");
+        if (options == null || options.length() == 0) return;
+        LinearLayout section = vertical();
+        section.setPadding(0, dp(12), 0, dp(10));
+        section.addView(text(pricing.optString("title", "Service estimate"), 15, BLACK, true));
+        String subtitle = pricing.optString("subtitle", "").trim();
+        if (!subtitle.isEmpty()) section.addView(text(subtitle, 11, MUTED, false), margin(-1, -2, 0, 3, 0, 8));
+        List<LinearLayout> cards = new ArrayList<>();
+        for (int i = 0; i < Math.min(options.length(), 20); i++) {
+            JSONObject option = options.optJSONObject(i);
+            if (option == null) continue;
+            String id = option.optString("id", "").trim();
+            String label = option.optString("label", "").trim();
+            if (id.isEmpty() || label.isEmpty()) continue;
+            LinearLayout card = vertical();
+            card.setTag(id);
+            card.setPadding(dp(14), dp(11), dp(14), dp(11));
+            TextView title = text(label + "   ₹" + option.optInt("amount", 0), 13, BLACK, true);
+            card.addView(title);
+            String details = option.optString("description", "").trim();
+            if (!details.isEmpty()) card.addView(text(details, 10, MUTED, false), margin(-1, -2, 0, 4, 0, 0));
+            card.addView(text("No payment is collected during booking", 9, Color.rgb(20, 139, 82), true), margin(-1, -2, 0, 4, 0, 0));
+            cards.add(card);
+            card.setOnClickListener(view -> {
+                selectedCleaningPricingOptionId = id;
+                for (LinearLayout item : cards) styleRemoteCleaningPrice(item, id.equals(item.getTag()));
+            });
+            addPressAnimation(card);
+            section.addView(card, margin(-1, -2, 0, 0, 0, 8));
+        }
+        if (!cards.isEmpty()) {
+            selectedCleaningPricingOptionId = String.valueOf(cards.get(0).getTag());
+            for (LinearLayout card : cards) styleRemoteCleaningPrice(card, selectedCleaningPricingOptionId.equals(card.getTag()));
+            bookingForm.addView(section);
+            bookingForm.addView(insetDivider(0));
+        }
+    }
+
+    private void styleRemoteCleaningPrice(LinearLayout card, boolean selected) {
+        card.setBackground(stroke(selected ? Color.rgb(255, 247, 249) : Color.WHITE,
+                selected ? BOOKING_THEME : Color.rgb(231, 224, 225), dp(12)));
+    }
+
+    private void addRemoteBookingPages(Service service) {
+        if (service == null || appControl == null || bookingForm == null) return;
+        JSONArray pages = appControl.formSchema(service.getId()).optJSONArray("pages");
+        if (pages == null) return;
+        for (int i = 0; i < Math.min(pages.length(), 12); i++) {
+            JSONObject page = pages.optJSONObject(i);
+            if (page == null || !page.optBoolean("enabled", true)) continue;
+            String title = page.optString("title", "").trim();
+            if (title.isEmpty()) continue;
+            LinearLayout card = vertical();
+            card.setPadding(dp(14), dp(12), dp(14), dp(12));
+            card.setBackground(stroke(Color.rgb(255, 250, 251), Color.rgb(251, 205, 217), dp(12)));
+            card.addView(text(title, 13, BLACK, true));
+            String body = page.optString("body", "").trim();
+            if (!body.isEmpty()) card.addView(text(body, 11, MUTED, false), margin(-1, -2, 0, 5, 0, 0));
+            bookingForm.addView(card, margin(-1, -2, 0, 0, 0, 8));
         }
     }
 
@@ -10887,6 +12962,36 @@ public class MainActivity extends Activity {
         copy.setIncludeFontPadding(false);
         card.addView(copy, new LinearLayout.LayoutParams(0, -2, 1));
         return card;
+    }
+
+    private final class LaundryItemCatalogView extends View {
+        private final int catalogIndex;
+        private final Paint catalogPaint = new Paint(Paint.ANTI_ALIAS_FLAG | Paint.FILTER_BITMAP_FLAG);
+
+        LaundryItemCatalogView(int catalogIndex) {
+            super(MainActivity.this);
+            this.catalogIndex = Math.max(0, Math.min(13, catalogIndex));
+            setLayerType(View.LAYER_TYPE_SOFTWARE, null);
+        }
+
+        @Override protected void onDraw(Canvas canvas) {
+            super.onDraw(canvas);
+            if (laundryItemCatalogBitmap == null || laundryItemCatalogBitmap.isRecycled()) {
+                laundryItemCatalogBitmap = BitmapFactory.decodeResource(getResources(), R.drawable.laundry_items_catalog_v1);
+            }
+            Bitmap bitmap = laundryItemCatalogBitmap;
+            if (bitmap == null) return;
+            int cellWidth = bitmap.getWidth() / 4;
+            int cellHeight = bitmap.getHeight() / 4;
+            int column = catalogIndex % 4;
+            int row = catalogIndex / 4;
+            Rect source = new Rect(column * cellWidth, row * cellHeight,
+                    column == 3 ? bitmap.getWidth() : (column + 1) * cellWidth,
+                    row == 3 ? bitmap.getHeight() : (row + 1) * cellHeight);
+            int inset = dp(1);
+            Rect destination = new Rect(inset, inset, getWidth() - inset, getHeight() - inset);
+            canvas.drawBitmap(bitmap, source, destination, catalogPaint);
+        }
     }
 
     private final class LaundryBookingIconView extends View {
@@ -11389,8 +13494,8 @@ public class MainActivity extends Activity {
         addPressAnimation(manualRow);
         if ("laundry".equals(service.getId())) {
             LinearLayout addressChoices = horizontal();
-            addressChoices.addView(currentRow, margin(0, 64, 0, 0, 5, 0, 1));
-            addressChoices.addView(manualRow, margin(0, 64, 5, 0, 0, 0, 1));
+            addressChoices.addView(currentRow, margin(0, -2, 0, 0, 5, 0, 1));
+            addressChoices.addView(manualRow, margin(0, -2, 5, 0, 0, 0, 1));
             card.addView(addressChoices, margin(-1, -2, 0, 16, 0, 10));
         } else {
             card.addView(currentRow, margin(-1, 64, 0, 16, 0, 0));
@@ -11421,17 +13526,26 @@ public class MainActivity extends Activity {
     private LinearLayout bookingAddressOption(TextView radio, int iconRes, String title, String subtitle, boolean selected) {
         LinearLayout row = horizontal();
         row.setGravity(Gravity.CENTER_VERTICAL);
-        row.setPadding(dp(12), 0, dp(12), 0);
+        row.setPadding(dp(9), dp(10), dp(9), dp(10));
         styleAddressOption(row, radio, selected);
         radio.setGravity(Gravity.CENTER);
-        row.addView(radio, new LinearLayout.LayoutParams(dp(36), dp(44)));
+        row.addView(radio, new LinearLayout.LayoutParams(dp(28), dp(40)));
 
-        row.addView(bookingIconBadge(iconRes, 44, 1.3f), new LinearLayout.LayoutParams(dp(44), dp(44)));
+        row.addView(bookingIconBadge(iconRes, 40, 1.15f), new LinearLayout.LayoutParams(dp(40), dp(40)));
 
         LinearLayout copy = vertical();
-        copy.setPadding(dp(14), 0, 0, 0);
-        copy.addView(text(title, 14, BLACK, true));
-        copy.addView(text(subtitle, 12, MUTED, false), margin(-1, -2, 0, 2, 0, 0));
+        copy.setPadding(dp(9), 0, 0, 0);
+        TextView titleView = text(title, 12, BLACK, true);
+        titleView.setMaxLines(2);
+        titleView.setEllipsize(TextUtils.TruncateAt.END);
+        titleView.setIncludeFontPadding(false);
+        copy.addView(titleView);
+        TextView subtitleView = text(subtitle, 10, MUTED, false);
+        subtitleView.setMaxLines(2);
+        subtitleView.setEllipsize(TextUtils.TruncateAt.END);
+        subtitleView.setIncludeFontPadding(false);
+        subtitleView.setLineSpacing(dp(1), 1f);
+        copy.addView(subtitleView, margin(-1, -2, 0, 3, 0, 0));
         row.addView(copy, new LinearLayout.LayoutParams(0, -2, 1));
 
         return row;
@@ -11477,7 +13591,7 @@ public class MainActivity extends Activity {
 
     private void showBookingPhoneEditor(boolean primary) {
         if (primary) {
-            Toast.makeText(this, "Primary number is your verified login number.", Toast.LENGTH_SHORT).show();
+            SafeToast.makeText(this, "Primary number is your verified login number.", Toast.LENGTH_SHORT).show();
             return;
         }
         AlertDialog dialog = new AlertDialog.Builder(this).create();
@@ -11501,11 +13615,11 @@ public class MainActivity extends Activity {
         save.setOnClickListener(view -> {
             String phone = normalizeCustomerPhoneInput(input.getText().toString());
             if (!isValidCustomerMobile(phone)) {
-                Toast.makeText(this, "Enter a valid 10-digit mobile number", Toast.LENGTH_SHORT).show();
+                SafeToast.makeText(this, "Enter a valid 10-digit mobile number", Toast.LENGTH_SHORT).show();
                 return;
             }
             if (primary && phone.equals(bookingAlternatePhone) || !primary && phone.equals(bookingPrimaryPhone)) {
-                Toast.makeText(this, "Primary and alternate numbers must be different", Toast.LENGTH_SHORT).show();
+                SafeToast.makeText(this, "Primary and alternate numbers must be different", Toast.LENGTH_SHORT).show();
                 return;
             }
             if (primary) {
@@ -11670,7 +13784,7 @@ public class MainActivity extends Activity {
 
     private void styleAddressOption(LinearLayout row, TextView radio, boolean selected) {
         row.setBackground(selected ? round(ORANGE_SOFT, dp(12)) : stroke(Color.WHITE, Color.rgb(238, 225, 221), dp(12)));
-        row.setElevation(selected ? dp(3) : dp(1));
+        row.setElevation(0);
         radio.setText(selected ? "\u25C9" : "\u25CB");
         radio.setTextColor(selected ? ORANGE : Color.rgb(165, 165, 165));
     }
@@ -11697,11 +13811,11 @@ public class MainActivity extends Activity {
     private void addBookingContinueButton(Service service) {
         View button = glassContinueButton("Continue", view -> {
             if (!isBookingAddressReady()) {
-                Toast.makeText(this, bookingAddressError(), Toast.LENGTH_SHORT).show();
+                SafeToast.makeText(this, bookingAddressError(), Toast.LENGTH_SHORT).show();
                 return;
             }
             if (!isValidCustomerMobile(bookingPrimaryPhone)) {
-                Toast.makeText(this, "Add a valid primary contact number", Toast.LENGTH_SHORT).show();
+                SafeToast.makeText(this, "Add a valid primary contact number", Toast.LENGTH_SHORT).show();
                 showBookingPhoneEditor(true);
                 return;
             }
@@ -11721,6 +13835,9 @@ public class MainActivity extends Activity {
         bottomNav.setVisibility(View.GONE);
         setActiveNav(null);
         resetScreen();
+        if (bookingAreaUnavailable) {
+            screenContent.addView(serviceAreaUnavailableBanner(), margin(-1, -2, 0, 0, 0, 0));
+        }
         addBookingTopBar();
         addBookingStepperConfirm();
 
@@ -11905,7 +14022,7 @@ public class MainActivity extends Activity {
         save.setOnClickListener(view -> {
             String updatedAddress = edit.getText().toString().trim();
             if (updatedAddress.length() < 10) {
-                Toast.makeText(this, "Enter the complete service address", Toast.LENGTH_SHORT).show();
+                SafeToast.makeText(this, "Enter the complete service address", Toast.LENGTH_SHORT).show();
                 return;
             }
             if (addressInput == null) {
@@ -12021,13 +14138,12 @@ public class MainActivity extends Activity {
         }
         int sample = 1;
         int targetPixels = isLowRamDevice() ? 128 : 256;
-        while (bounds.outWidth / (sample * 2) >= targetPixels
-                && bounds.outHeight / (sample * 2) >= targetPixels) {
+        while (Math.max(bounds.outWidth, bounds.outHeight) / (sample * 2) >= targetPixels) {
             sample *= 2;
         }
         BitmapFactory.Options options = new BitmapFactory.Options();
         options.inSampleSize = sample;
-        options.inPreferredConfig = Bitmap.Config.ARGB_8888;
+        options.inPreferredConfig = Bitmap.Config.RGB_565;
         Bitmap bitmap = BitmapFactory.decodeResource(getResources(), resId, options);
         if (bitmap != null) {
             compactIconCache.put(resId, bitmap);
@@ -12040,8 +14156,8 @@ public class MainActivity extends Activity {
         card.setClipChildren(false);
         card.setClipToPadding(false);
         card.setPadding(dp(padding), dp(padding), dp(padding), dp(padding));
-        card.setBackground(stroke(Color.WHITE, Color.rgb(238, 225, 221), dp(18)));
-        card.setElevation(dp(6));
+        card.setBackground(stroke(Color.WHITE, Color.rgb(235, 229, 228), dp(18)));
+        card.setElevation(0f);
         return card;
     }
 
@@ -12416,7 +14532,7 @@ public class MainActivity extends Activity {
 
         TextView confirm = commercialPrimaryButton("Confirm Time Slot", view -> {
             if (selectedIndex[0] < 0) {
-                Toast.makeText(this, "Please select an available time slot", Toast.LENGTH_SHORT).show();
+                SafeToast.makeText(this, "Please select an available time slot", Toast.LENGTH_SHORT).show();
                 return;
             }
             selectedTime = slots[selectedIndex[0]];
@@ -12657,7 +14773,7 @@ public class MainActivity extends Activity {
         showAppChrome();
         setActiveNav(navProfile);
         resetScreen();
-        List<Booking> bookings = bookingStore.load();
+        List<Booking> bookings = bookingHistoryForDisplay();
         latestBooking = bookings.isEmpty() ? null : bookings.get(0);
         floatingFooter.setVisibility(View.GONE);
         if (renderProfile(bookings)) {
@@ -12938,11 +15054,11 @@ public class MainActivity extends Activity {
             String rawPhone = phoneInput.getText().toString().trim();
             String cleanPhone = normalizeCustomerPhoneInput(rawPhone);
             if (TextUtils.isEmpty(name)) {
-                Toast.makeText(this, "Name required", Toast.LENGTH_SHORT).show();
+                SafeToast.makeText(this, "Name required", Toast.LENGTH_SHORT).show();
                 return;
             }
             if (!isValidCustomerMobile(cleanPhone)) {
-                Toast.makeText(this, "Please enter a valid 10-digit mobile number.", Toast.LENGTH_SHORT).show();
+                SafeToast.makeText(this, "Please enter a valid 10-digit mobile number.", Toast.LENGTH_SHORT).show();
                 return;
             }
             putSecureString(KEY_CUSTOMER_NAME, name);
@@ -12950,7 +15066,7 @@ public class MainActivity extends Activity {
             if (backendClient != null) {
                 backendClient.connectFcmTokenToProfile(name, TextUtils.isEmpty(cleanPhone) ? "" : cleanPhone, customerEmail(), "", serviceLat, serviceLng);
             }
-            Toast.makeText(this, "Profile updated", Toast.LENGTH_SHORT).show();
+            SafeToast.makeText(this, "Profile updated", Toast.LENGTH_SHORT).show();
             dialog.dismiss();
             showProfile();
         });
@@ -13072,42 +15188,43 @@ public class MainActivity extends Activity {
     private void showCustomerLegalInformationDialog() {
         AlertDialog dialog = new AlertDialog.Builder(this).create();
         LinearLayout page = vertical();
-        page.setPadding(dp(22), dp(18), dp(22), dp(18));
+        page.setPadding(dp(20), dp(18), dp(20), dp(18));
         page.setBackgroundColor(Color.rgb(255, 250, 250));
 
         View back = referenceNavigationIcon(false);
         back.setOnClickListener(view -> dialog.dismiss());
         addPressAnimation(back);
-        page.addView(back, margin(38, 38, 0, 0, 0, 12));
-        page.addView(text("Legal & Support", 25, Color.rgb(48, 9, 21), true));
-        TextView intro = text("All policies, support and account\nrelated help in one place.", 14, MUTED, false);
+        page.addView(back, margin(44, 44, 0, 0, 0, 28));
+        page.addView(text("Legal & Support", 32, Color.rgb(35, 10, 20), true));
+        TextView intro = text("All policies, support and account\nrelated help in one place.", 18, Color.rgb(91, 87, 88), false);
         intro.setLineSpacing(dp(3), 1f);
-        page.addView(intro, margin(-1, -2, 0, 5, 0, 18));
+        page.addView(intro, margin(-1, -2, 0, 8, 0, 24));
 
         LinearLayout hint = horizontal();
         hint.setGravity(Gravity.CENTER_VERTICAL);
-        hint.setPadding(dp(14), dp(12), dp(14), dp(12));
-        hint.setBackground(stroke(Color.rgb(255, 244, 246), Color.rgb(241, 209, 217), dp(14)));
-        hint.addView(referenceLineIcon("book"), new LinearLayout.LayoutParams(dp(44), dp(44)));
+        hint.setPadding(dp(22), dp(16), dp(20), dp(16));
+        hint.setBackground(stroke(Color.rgb(255, 247, 248), Color.rgb(247, 196, 208), dp(18)));
+        View accent = new View(this);
+        accent.setBackground(round(Color.rgb(232, 111, 137), dp(2)));
+        hint.addView(accent, new LinearLayout.LayoutParams(dp(4), dp(48)));
         LinearLayout hintCopy = vertical();
-        hintCopy.setPadding(dp(12), 0, 0, 0);
-        hintCopy.addView(text("Read only the section you need", 14, Color.rgb(48, 9, 21), true));
-        hintCopy.addView(text("Find the right information quickly.", 12, MUTED, false));
+        hintCopy.setPadding(dp(22), 0, 0, 0);
+        hintCopy.addView(text("Read only the section you need", 18, Color.rgb(48, 9, 21), true));
+        hintCopy.addView(text("Find the right information quickly.", 16, Color.rgb(91, 87, 88), false), margin(-1, -2, 0, 5, 0, 0));
         hint.addView(hintCopy, new LinearLayout.LayoutParams(0, -2, 1));
-        page.addView(hint, margin(-1, -2, 0, 0, 0, 14));
+        page.addView(hint, margin(-1, -2, 0, 0, 0, 18));
 
         ScrollView scroll = new ScrollView(this);
         scroll.setFillViewport(false);
         scroll.setOverScrollMode(View.OVER_SCROLL_NEVER);
         LinearLayout list = vertical();
-        list.addView(referenceLegalRow("rocket", "Terms & Conditions", "Platform rules for bookings,\npayments and accounts.", false, view -> showCustomerLegalDialog("Terms & Conditions")));
-        list.addView(referenceLegalRow("lock", "Privacy Policy", "How ApnaServo protects\nand uses your data.", false, view -> showCustomerLegalDialog("Privacy Policy")), margin(-1, -2, 0, 10, 0, 0));
-        list.addView(referenceLegalRow("external", "Privacy Policy Online", "Open the official ApnaServo\nprivacy policy.", true, view -> openLegalWebPage(PRIVACY_POLICY_URL)), margin(-1, -2, 0, 10, 0, 0));
-        list.addView(referenceLegalRow("refund", "Refund & Cancellation", "Cancellation, quotation, payment\nand dispute policy.", false, view -> showCustomerLegalTextDialog("Refund & Cancellation", customerRefundCancellationText())), margin(-1, -2, 0, 10, 0, 0));
-        list.addView(referenceLegalRow("shield", "Safety Guidelines", "Safety, identity verification and\nrespectful use.", false, view -> showCustomerLegalTextDialog("Safety Guidelines", customerSafetyGuidelinesText())), margin(-1, -2, 0, 10, 0, 0));
-        list.addView(referenceLegalRow("support", "Contact Support", "Booking, payment, safety and\naccount related help.", false, view -> { dialog.dismiss(); showSupportChat(); }), margin(-1, -2, 0, 10, 0, 0));
-        list.addView(referenceLegalRow("trash", "Delete Account", "Request deletion of your\ncustomer account.", false, view -> { dialog.dismiss(); showDeleteAccountConfirmDialog(); }), margin(-1, -2, 0, 10, 0, 0));
-        list.addView(referenceSafetyFooter(), margin(-1, -2, 0, 18, 0, 12));
+        list.addView(referenceLegalRow("Terms & Conditions", "Platform rules for bookings, payments and accounts.", false, view -> showCustomerLegalDialog("Terms & Conditions")));
+        list.addView(referenceLegalRow("Privacy Policy", "How ApnaServo protects and uses your data.", false, view -> showCustomerLegalDialog("Privacy Policy")), margin(-1, -2, 0, 12, 0, 0));
+        list.addView(referenceLegalRow("Privacy Policy Online", "Open the official ApnaServo privacy policy.", true, view -> openLegalWebPage(PRIVACY_POLICY_URL)), margin(-1, -2, 0, 12, 0, 0));
+        list.addView(referenceLegalRow("Refund & Cancellation", "Cancellation, quotation, payment and dispute policy.", false, view -> showCustomerLegalTextDialog("Refund & Cancellation", customerRefundCancellationText())), margin(-1, -2, 0, 12, 0, 0));
+        list.addView(referenceLegalRow("Safety Guidelines", "Safety, identity verification and respectful use.", false, view -> showCustomerLegalTextDialog("Safety Guidelines", customerSafetyGuidelinesText())), margin(-1, -2, 0, 12, 0, 0));
+        list.addView(referenceLegalRow("Contact Support", "Booking, payment, safety and account related help.", false, view -> { dialog.dismiss(); showSupportChat(); }), margin(-1, -2, 0, 12, 0, 0));
+        list.addView(referenceLegalRow("Delete Account", "Permanently delete your account and data.", false, view -> { dialog.dismiss(); showDeleteAccountConfirmDialog(); }), margin(-1, -2, 0, 12, 0, 0));
         scroll.addView(list, new ScrollView.LayoutParams(-1, -2));
         page.addView(scroll, new LinearLayout.LayoutParams(-1, 0, 1));
 
@@ -13121,23 +15238,25 @@ public class MainActivity extends Activity {
         dialog.show();
     }
 
-    private View referenceLegalRow(String icon, String title, String body, boolean external, View.OnClickListener listener) {
+    private View referenceLegalRow(String title, String body, boolean external, View.OnClickListener listener) {
         LinearLayout row = horizontal();
         row.setGravity(Gravity.CENTER_VERTICAL);
-        row.setPadding(dp(14), dp(12), dp(12), dp(12));
-        row.setBackground(stroke(Color.WHITE, Color.rgb(245, 228, 232), dp(16)));
-        row.setElevation(dp(2));
+        row.setMinimumHeight(dp(118));
+        row.setPadding(dp(20), dp(14), dp(16), dp(14));
+        row.setBackground(stroke(Color.WHITE, Color.rgb(245, 228, 232), dp(18)));
+        row.setElevation(dp(3));
         row.setOnClickListener(listener);
         addPressAnimation(row);
-        row.addView(referenceLineIcon(icon), new LinearLayout.LayoutParams(dp(50), dp(50)));
         LinearLayout copy = vertical();
-        copy.setPadding(dp(14), 0, dp(8), 0);
-        copy.addView(text(title, 14, Color.rgb(48, 9, 21), true));
-        TextView detail = text(body, 12, MUTED, false);
+        copy.setPadding(dp(0), 0, dp(8), 0);
+        copy.addView(text(title, 18, Color.rgb(28, 20, 23), true));
+        TextView detail = text(body, 16, Color.rgb(91, 87, 88), false);
+        detail.setMaxLines(2);
+        detail.setEllipsize(TextUtils.TruncateAt.END);
         detail.setLineSpacing(dp(2), 1f);
-        copy.addView(detail, margin(-1, -2, 0, 3, 0, 0));
+        copy.addView(detail, margin(-1, -2, 0, 6, 0, 0));
         row.addView(copy, new LinearLayout.LayoutParams(0, -2, 1));
-        row.addView(referenceRowActionIcon(external), new LinearLayout.LayoutParams(dp(28), dp(38)));
+        row.addView(referenceRowActionIcon(external), new LinearLayout.LayoutParams(dp(36), dp(44)));
         return row;
     }
 
@@ -13211,6 +15330,18 @@ public class MainActivity extends Activity {
                     canvas.drawArc(l,t,r,cy+.13f*h,190,160,false,paint); canvas.drawLine(l,cy,l,cy+.17f*h,paint); canvas.drawLine(r,cy,r,cy+.17f*h,paint); canvas.drawCircle(l,cy+.12f*h,.045f*w,paint); canvas.drawCircle(r,cy+.12f*h,.045f*w,paint); canvas.drawLine(r,cy+.17f*h,cx+.1f*w,b,paint);
                 } else if ("trash".equals(kind)) {
                     canvas.drawRoundRect(l+.08f*w,t+.13f*h,r-.08f*w,b,.04f*w,.04f*w,paint); canvas.drawLine(l,t+.1f*h,r,t+.1f*h,paint); canvas.drawLine(cx-.09f*w,t,cx+.09f*w,t,paint); canvas.drawLine(cx-.08f*w,cy-.02f*h,cx-.08f*w,b-.08f*h,paint); canvas.drawLine(cx+.08f*w,cy-.02f*h,cx+.08f*w,b-.08f*h,paint);
+                } else if ("location".equals(kind)) {
+                    path.reset();
+                    path.moveTo(cx, b);
+                    path.cubicTo(cx - .28f * w, cy + .12f * h, l + .03f * w, cy - .10f * h, cx, t);
+                    path.cubicTo(r - .03f * w, cy - .10f * h, cx + .28f * w, cy + .12f * h, cx, b);
+                    canvas.drawPath(path, paint);
+                    canvas.drawCircle(cx, cy - .10f * h, .09f * w, paint);
+                } else if ("edit".equals(kind)) {
+                    canvas.drawRoundRect(l, t + .08f * h, r - .09f * w, b, .05f * w, .05f * w, paint);
+                    canvas.drawLine(cx - .15f * w, cy + .15f * h, r, t, paint);
+                    canvas.drawLine(r, t, r + .02f * w, t + .13f * h, paint);
+                    canvas.drawLine(r + .02f * w, t + .13f * h, cx - .10f * w, cy + .20f * h, paint);
                 } else if ("home".equals(kind)) {
                     path.reset(); path.moveTo(l,cy); path.lineTo(cx,t); path.lineTo(r,cy); path.moveTo(l+.08f*w,cy-.03f*h); path.lineTo(l+.08f*w,b); path.lineTo(r-.08f*w,b); path.lineTo(r-.08f*w,cy-.03f*h); canvas.drawPath(path,paint); canvas.drawRect(cx-.07f*w,cy+.09f*h,cx+.07f*w,b,paint);
                 } else if ("work".equals(kind)) {
@@ -13345,7 +15476,7 @@ public class MainActivity extends Activity {
             intent.addCategory(Intent.CATEGORY_BROWSABLE);
             startActivity(intent);
         } catch (Exception error) {
-            Toast.makeText(this, "Could not open the page. Please try again.", Toast.LENGTH_LONG).show();
+            SafeToast.makeText(this, "Could not open the page. Please try again.", Toast.LENGTH_LONG).show();
         }
     }
 
@@ -13689,7 +15820,7 @@ public class MainActivity extends Activity {
                 @Override
                 public void onSuccess(JSONObject object) {
                     dialog.dismiss();
-                    Toast.makeText(MainActivity.this, "Delete account request submitted", Toast.LENGTH_LONG).show();
+                    SafeToast.makeText(MainActivity.this, "Delete account request submitted", Toast.LENGTH_LONG).show();
                     logoutCustomer();
                 }
 
@@ -13697,7 +15828,7 @@ public class MainActivity extends Activity {
                 public void onError(String message) {
                     request.setEnabled(true);
                     request.setText("Request Delete");
-                    Toast.makeText(MainActivity.this, "Could not submit deletion request. Check internet and try again.", Toast.LENGTH_LONG).show();
+                    SafeToast.makeText(MainActivity.this, "Could not submit deletion request. Check internet and try again.", Toast.LENGTH_LONG).show();
                 }
             });
         });
@@ -13796,9 +15927,11 @@ public class MainActivity extends Activity {
                 String title = index == 0 ? "Home" : (index == 1 ? "Work" : "Service Address " + (index + 1));
                 String note = selected ? "Default service address" : "Saved from your booking";
                 sheet.addView(savedAddressCard(index == 0 ? "home" : "work", title, address, note, selected, view -> {
+                    headerPrefersDetectedLocation = false;
                     putSecureString(KEY_DEFAULT_SAVED_ADDRESS, address);
+                    syncCustomerProfileToBackend();
                     dialog.dismiss();
-                    showSavedAddressDialog();
+                    showHome();
                 }), margin(-1, -2, 0, 0, 0, index == addresses.size() - 1 ? 16 : 0));
                 if (index < addresses.size() - 1) sheet.addView(insetDivider(0), margin(-1, 1, 0, 8, 0, 8));
             }
@@ -13889,12 +16022,12 @@ public class MainActivity extends Activity {
     private void showBookingChat(Booking booking) {
         if (!requireFeature(FeatureRegistry.BOOKING_CHAT, "Booking chat")) return;
         if (booking == null) {
-            Toast.makeText(this, "Booking not found", Toast.LENGTH_SHORT).show();
+            SafeToast.makeText(this, "Booking not found", Toast.LENGTH_SHORT).show();
             showTrack();
             return;
         }
         if (!isPartnerAcceptedStatus(remoteBookingStatus) && !partnerAssigned) {
-            Toast.makeText(this, "Chat will be available after a partner is assigned.", Toast.LENGTH_SHORT).show();
+            SafeToast.makeText(this, "Chat will be available after a partner is assigned.", Toast.LENGTH_SHORT).show();
             return;
         }
         latestBooking = booking;
@@ -13913,6 +16046,9 @@ public class MainActivity extends Activity {
         supportFeedbackView = null;
         supportTypingView = null;
         supportStatusViews.clear();
+        supportDeliveryStates.clear();
+        supportRenderedMessageIds.clear();
+        supportRenderedUserBodies.clear();
         bookingChatRendered.clear();
 
         addBookingChatTopBar(laundryBooking ? "Laundry Service Chat" : "Service Chat");
@@ -13987,7 +16123,7 @@ public class MainActivity extends Activity {
         TextView info = text("i", 20, BOOKING_THEME, true);
         info.setGravity(Gravity.CENTER);
         info.setBackground(round(Color.rgb(255, 241, 245), dp(22)));
-        info.setOnClickListener(view -> Toast.makeText(this,
+        info.setOnClickListener(view -> SafeToast.makeText(this,
                 "Booking " + booking.getId() + " with " + activeBookingChatPeer,
                 Toast.LENGTH_SHORT).show());
         addPressAnimation(info);
@@ -14101,7 +16237,7 @@ public class MainActivity extends Activity {
 
         TextView attach = text("\uD83D\uDCCE", 19, BOOKING_THEME, false);
         attach.setGravity(Gravity.CENTER);
-        attach.setOnClickListener(view -> Toast.makeText(this, "Attachment sharing will be available soon.", Toast.LENGTH_SHORT).show());
+        attach.setOnClickListener(view -> SafeToast.makeText(this, "Attachment sharing will be available soon.", Toast.LENGTH_SHORT).show());
         addPressAnimation(attach);
         bar.addView(attach, new LinearLayout.LayoutParams(dp(40), -1));
 
@@ -14112,6 +16248,7 @@ public class MainActivity extends Activity {
         supportInput.setHintTextColor(MUTED);
         supportInput.setSingleLine(false);
         supportInput.setMaxLines(2);
+        supportInput.setFilters(new InputFilter[]{new InputFilter.LengthFilter(MAX_SUPPORT_MESSAGE_CHARS)});
         supportInput.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_CAP_SENTENCES | InputType.TYPE_TEXT_FLAG_MULTI_LINE);
         supportInput.setBackground(round(Color.WHITE, dp(16)));
         supportInput.setPadding(dp(7), 0, dp(7), 0);
@@ -14167,11 +16304,11 @@ public class MainActivity extends Activity {
     private void sendBookingChatMessage(String preset) {
         String message = preset == null && supportInput != null ? supportInput.getText().toString().trim() : preset;
         if (TextUtils.isEmpty(message)) {
-            Toast.makeText(this, "Please type a message", Toast.LENGTH_SHORT).show();
+            SafeToast.makeText(this, "Please type a message", Toast.LENGTH_SHORT).show();
             return;
         }
         if (TextUtils.isEmpty(activeBookingChatId)) {
-            Toast.makeText(this, "Booking chat unavailable", Toast.LENGTH_SHORT).show();
+            SafeToast.makeText(this, "Booking chat unavailable", Toast.LENGTH_SHORT).show();
             return;
         }
         if (supportInput != null) {
@@ -14204,7 +16341,6 @@ public class MainActivity extends Activity {
             public void onSuccess(JSONObject object) {
                 removeQueuedBookingChatMessage(finalMessageId);
                 updateBookingChatMessageStatus(finalMessageId, "Sent");
-                carouselHandler.postDelayed(() -> updateBookingChatMessageStatus(finalMessageId, "Delivered"), 500);
             }
 
             @Override
@@ -14343,7 +16479,7 @@ public class MainActivity extends Activity {
                 backendClient.markBookingChatSeen(TextUtils.isEmpty(activeBookingChatId) ? bookingId : activeBookingChatId);
             }
         } else {
-            Toast.makeText(this, "Partner sent a message", Toast.LENGTH_SHORT).show();
+            SafeToast.makeText(this, "Partner sent a message", Toast.LENGTH_SHORT).show();
         }
     }
 
@@ -14478,6 +16614,7 @@ public class MainActivity extends Activity {
         supportFeedbackView = null;
         supportTypingView = null;
         supportStatusViews.clear();
+        supportDeliveryStates.clear();
         supportReplySequence++;
         activeSupportTicketId = "";
         activeSupportComplaintMessageId = "";
@@ -14485,13 +16622,14 @@ public class MainActivity extends Activity {
         supportLaunchStatusKnown = false;
         supportLaunchDateLabel = "";
         if (navOffers != null) navOffers.setVisibility(View.GONE);
+        screenContent.setBackgroundColor(Color.rgb(253, 249, 248));
 
         screenContent.addView(supportHeader());
-        screenContent.addView(supportPrivacyPill(), margin(-1, 54, 16, 6, 16, 16));
+        screenContent.addView(supportPrivacyPill(), margin(-1, -2, 16, 8, 16, 15));
 
         supportMessages = vertical();
-        supportMessages.addView(supportDatePill(), margin(-1, -2, 0, 0, 0, 14));
-        screenContent.addView(supportMessages, margin(-1, -2, 16, 6, 16, 14));
+        supportMessages.addView(supportDatePill(), margin(-1, -2, 0, 0, 0, 13));
+        screenContent.addView(supportMessages, margin(-1, -2, 16, 0, 16, 14));
 
         addSupportWelcomeMessage();
         addSupportActionGrid();
@@ -14499,8 +16637,9 @@ public class MainActivity extends Activity {
 
         if (supportInputDock != null) {
             supportInputDock.removeAllViews();
-            supportInputDock.addView(supportQuickSuggestionRow(), new LinearLayout.LayoutParams(-1, dp(42)));
-            supportInputDock.addView(supportInputBar(), new LinearLayout.LayoutParams(-1, dp(58)));
+            supportInputDock.setBackgroundColor(Color.rgb(253, 249, 248));
+            supportInputDock.addView(supportQuickSuggestionRow(), new LinearLayout.LayoutParams(-1, dp(54)));
+            supportInputDock.addView(supportInputBar(), new LinearLayout.LayoutParams(-1, dp(60)));
             supportInputDock.setVisibility(View.VISIBLE);
         } else {
             screenContent.addView(supportInputBar(), margin(-1, 62, 16, 0, 16, 96));
@@ -14509,6 +16648,10 @@ public class MainActivity extends Activity {
             supportInput.setText(draftMessage);
             supportInput.setSelection(supportInput.getText().length());
         }
+        // Do not raise the keyboard just because the Support screen opened. The
+        // conversation should be readable first; tapping the composer still opens it.
+        screenContent.setFocusableInTouchMode(true);
+        screenContent.requestFocus();
         mainScroll.post(() -> mainScroll.scrollTo(0, 0));
     }
 
@@ -14527,105 +16670,114 @@ public class MainActivity extends Activity {
     }
 
     private View supportHeader() {
-        FrameLayout header = new FrameLayout(this);
-        header.setPadding(dp(18), dp(14), dp(18), dp(8));
+        LinearLayout header = horizontal();
+        header.setGravity(Gravity.CENTER_VERTICAL);
+        header.setPadding(dp(12), dp(12), dp(12), dp(10));
 
-        TextView back = text("\u2039", 36, BLACK, false);
+        TextView back = text("\u2039", 32, Color.rgb(20, 27, 38), false);
         back.setGravity(Gravity.CENTER);
-        back.setBackground(round(Color.WHITE, dp(14)));
-        back.setElevation(dp(5));
+        back.setIncludeFontPadding(false);
+        back.setBackground(stroke(Color.rgb(255, 252, 253), Color.rgb(235, 219, 224), dp(18)));
         back.setOnClickListener(view -> handleBackNavigation());
         addPressAnimation(back);
-        FrameLayout.LayoutParams backParams = new FrameLayout.LayoutParams(dp(48), dp(48), Gravity.LEFT | Gravity.CENTER_VERTICAL);
-        header.addView(back, backParams);
+        header.addView(back, new LinearLayout.LayoutParams(dp(44), dp(44)));
+
+        View bot = supportHeaderAvatar();
+        header.addView(bot, margin(46, 46, 8, 0, 8, 0));
 
         LinearLayout center = vertical();
-        center.setGravity(Gravity.CENTER);
+        center.setGravity(Gravity.CENTER_VERTICAL | Gravity.LEFT);
         LinearLayout titleRow = horizontal();
-        titleRow.setGravity(Gravity.CENTER);
-        titleRow.addView(text("AI Support", 20, BLACK, true));
-        TextView badge = text("AI", 11, Color.rgb(45, 174, 70), true);
+        titleRow.setGravity(Gravity.CENTER_VERTICAL | Gravity.LEFT);
+        TextView title = text("Support", 17, BLACK, true);
+        title.setSingleLine(true);
+        titleRow.addView(title, new LinearLayout.LayoutParams(-2, -2));
+        TextView badge = text("AI", 11, Color.rgb(32, 174, 76), true);
         badge.setGravity(Gravity.CENTER);
-        badge.setBackground(round(Color.rgb(226, 247, 216), dp(14)));
-        titleRow.addView(badge, margin(34, 28, 7, 0, 0, 0));
+        badge.setIncludeFontPadding(false);
+        badge.setBackground(round(Color.rgb(220, 250, 225), dp(14)));
+        titleRow.addView(badge, margin(30, 24, 5, 0, 0, 0));
         center.addView(titleRow);
-        TextView subtitle = text("Always here to help you", 13, MUTED, false);
-        subtitle.setGravity(Gravity.CENTER);
-        center.addView(subtitle, margin(-1, -2, 0, 1, 0, 0));
-        header.addView(center, new FrameLayout.LayoutParams(-1, dp(64), Gravity.CENTER));
+        TextView subtitle = text("Always here to help you", 13, Color.rgb(102, 111, 126), false);
+        subtitle.setSingleLine(true);
+        center.addView(subtitle, margin(-2, -2, 0, 1, 0, 0));
+        header.addView(center, new LinearLayout.LayoutParams(0, dp(58), 1));
 
-        TextView more = text("\u2022\u2022\u2022", 18, BLACK, true);
+        TextView more = text("\u2022\u2022\u2022", 17, BLACK, true);
         more.setGravity(Gravity.CENTER);
-        more.setBackground(round(Color.WHITE, dp(14)));
-        more.setElevation(dp(5));
-        more.setOnClickListener(view -> Toast.makeText(this, "ApnaServo Support", Toast.LENGTH_SHORT).show());
+        more.setIncludeFontPadding(false);
+        more.setBackground(stroke(Color.WHITE, Color.rgb(239, 224, 229), dp(15)));
+        more.setContentDescription("Support options");
+        more.setOnClickListener(view -> SafeToast.makeText(this, "Support options", Toast.LENGTH_SHORT).show());
         addPressAnimation(more);
-        FrameLayout.LayoutParams moreParams = new FrameLayout.LayoutParams(dp(48), dp(48), Gravity.RIGHT | Gravity.CENTER_VERTICAL);
-        header.addView(more, moreParams);
+        header.addView(more, new LinearLayout.LayoutParams(dp(44), dp(44)));
         return header;
     }
 
     private View supportPrivacyPill() {
         LinearLayout pill = horizontal();
-        pill.setGravity(Gravity.CENTER);
-        pill.setPadding(dp(16), dp(9), dp(16), dp(9));
-        pill.setBackground(round(Color.WHITE, dp(22)));
-        pill.setElevation(dp(3));
-        TextView shield = text("\u2713", 13, GREEN, true);
-        shield.setGravity(Gravity.CENTER);
-        shield.setBackground(stroke(Color.TRANSPARENT, GREEN, dp(9)));
-        pill.addView(shield, new LinearLayout.LayoutParams(dp(24), dp(24)));
-        pill.addView(text("Your conversations are ", 12, MUTED, false), margin(-2, -2, 8, 0, 0, 0));
-        pill.addView(text("secure and private", 12, GREEN, true));
+        pill.setGravity(Gravity.CENTER_VERTICAL);
+        pill.setPadding(dp(14), dp(12), dp(14), dp(12));
+        pill.setBackground(stroke(Color.WHITE, Color.rgb(246, 224, 231), dp(21)));
+        View shield = new SupportSecurityIconView(this);
+        shield.setContentDescription("Secure conversation");
+        pill.addView(shield, new LinearLayout.LayoutParams(dp(42), dp(42)));
+        LinearLayout copy = vertical();
+        TextView privacyTitle = text("Your conversations are", 14, Color.rgb(89, 99, 115), false);
+        privacyTitle.setSingleLine(true);
+        copy.addView(privacyTitle);
+        TextView privacyStrong = text("secure and private", 14, Color.rgb(225, 43, 95), true);
+        privacyStrong.setSingleLine(true);
+        copy.addView(privacyStrong);
+        pill.addView(copy, margin(0, -2, 12, 0, 6, 0, 1));
+        View lock = new SupportLockIconView(this);
+        lock.setContentDescription("Private conversation");
+        pill.addView(lock, new LinearLayout.LayoutParams(dp(32), dp(42)));
         return pill;
     }
 
     private void addSupportWelcomeMessage() {
         LinearLayout row = horizontal();
         row.setGravity(Gravity.LEFT | Gravity.TOP);
-        row.addView(supportBotIcon(), new LinearLayout.LayoutParams(dp(34), dp(34)));
+        row.addView(supportBotIcon(), new LinearLayout.LayoutParams(dp(42), dp(42)));
         LinearLayout bubble = vertical();
-        bubble.setPadding(dp(14), dp(12), dp(14), dp(12));
-        bubble.setBackground(stroke(Color.WHITE, Color.rgb(244, 234, 236), dp(17)));
-        bubble.setElevation(dp(3));
-        bubble.addView(text("Namaste! \uD83D\uDE4F", 17, Color.rgb(247, 86, 116), true));
-        bubble.addView(text("Hi " + customerName() + ",\nI'm ApnaServo AI Support.\nHow can I help you today?", 14, BLACK, false), margin(-1, -2, 0, 5, 0, 0));
-        row.addView(bubble, margin(268, -2, 10, 0, 0, 0));
+        bubble.setPadding(dp(15), dp(14), dp(15), dp(12));
+        bubble.setBackground(stroke(Color.WHITE, Color.rgb(236, 229, 233), dp(20)));
+        bubble.addView(text("Namaste! \uD83D\uDE4F", 20, Color.rgb(221, 42, 92), true));
+        bubble.addView(text("Namaste " + customerName() + ",\nI'm your Support assistant.\nHow can I help you today?", 15, BLACK, false), margin(-1, -2, 0, 7, 0, 0));
+        TextView time = text(supportTimeLabel(), 11, Color.rgb(137, 145, 160), false);
+        time.setGravity(Gravity.RIGHT);
+        bubble.addView(time, margin(-1, -2, 0, 7, 0, 0));
+        row.addView(bubble, margin(0, -2, 9, 0, 0, 0, 1));
         supportMessages.addView(row, margin(-1, -2, 0, 0, 0, 12));
     }
 
     private void addSupportActionGrid() {
         LinearLayout row = horizontal();
         row.setGravity(Gravity.LEFT | Gravity.TOP);
-        row.addView(supportBotIcon(), new LinearLayout.LayoutParams(dp(34), dp(34)));
+        row.addView(supportBotIcon(), new LinearLayout.LayoutParams(dp(42), dp(42)));
         LinearLayout panel = vertical();
-        panel.setPadding(dp(11), dp(11), dp(11), dp(11));
-        panel.setBackground(stroke(Color.WHITE, Color.rgb(244, 234, 236), dp(17)));
-        panel.setElevation(dp(3));
-        panel.addView(text("Aap ka koi bhi help puch sakte ho:", 14, BLACK, true));
+        panel.setPadding(dp(12), dp(13), dp(12), dp(11));
+        panel.setBackground(stroke(Color.WHITE, Color.rgb(236, 229, 233), dp(20)));
+        panel.addView(text("Aap ka koi bhi help puch sakte ho:", 15, BLACK, true));
         LinearLayout first = horizontal();
-        first.addView(supportActionTile("\u25A3", "Booking Help", "I need help with my booking.", false));
-        first.addView(supportActionTile("\u2316", "Location /\nAddress Change", "How can I change my service address?", false));
-        first.addView(supportActionTile("\u25CB", "Profile Edit", "How can I edit my profile?", false));
-        panel.addView(first, margin(-1, 104, 0, 10, 0, 8));
-        LinearLayout second = horizontal();
-        second.addView(supportActionTile("\u25AD", "Payment /\nRefund", "I need information about payment or refund.", false));
-        second.addView(supportActionTile("\u2297", "Cancellation", "How can I cancel my booking?", false));
-        second.addView(supportActionTile("\u260E", "Complaint", "", true));
-        panel.addView(second, new LinearLayout.LayoutParams(-1, dp(104)));
-        row.addView(panel, margin(290, -2, 10, 0, 0, 0));
+        first.addView(supportActionTile("booking", "Booking Help", "I need help with my booking.", false));
+        first.addView(supportActionTile("location", "Location /\nAddress", "How can I change my service address?", false));
+        first.addView(supportActionTile("profile", "Profile Edit", "How can I edit my profile?", false));
+        panel.addView(first, margin(-1, 112, 0, 11, 0, 8));
+        TextView panelTime = text(supportTimeLabel(), 10, Color.rgb(137, 145, 160), false);
+        panelTime.setGravity(Gravity.RIGHT);
+        panel.addView(panelTime, margin(-1, -2, 0, 8, 0, 0));
+        row.addView(panel, margin(0, -2, 9, 0, 0, 0, 1));
         supportMessages.addView(row, margin(-1, -2, 0, 0, 0, 12));
     }
 
     private View supportActionTile(String icon, String label, String message, boolean complaint) {
         LinearLayout tile = vertical();
         tile.setGravity(Gravity.CENTER);
-        tile.setPadding(dp(4), dp(7), dp(4), dp(6));
-        tile.setBackground(stroke(Color.WHITE, Color.rgb(247, 239, 240), dp(14)));
-        tile.setElevation(dp(2));
-        TextView iconView = text(icon, 24, Color.rgb(247, 86, 116), false);
-        iconView.setGravity(Gravity.CENTER);
-        tile.addView(iconView, new LinearLayout.LayoutParams(-1, dp(42)));
+        tile.setPadding(dp(4), dp(9), dp(4), dp(7));
+        tile.setBackground(stroke(Color.WHITE, Color.rgb(231, 232, 237), dp(17)));
+        tile.addView(supportActionIcon(icon), new LinearLayout.LayoutParams(-1, dp(42)));
         TextView labelView = text(label, 11, BLACK, false);
         labelView.setGravity(Gravity.CENTER);
         labelView.setMaxLines(2);
@@ -14646,8 +16798,29 @@ public class MainActivity extends Activity {
         return marginWrap(tile, 0, -1, 3, 0, 3, 0, 1);
     }
 
+    private View supportActionIcon(String kind) {
+        int icon = 0;
+        if ("booking".equals(kind)) icon = R.drawable.ic_nav_bookings;
+        else if ("profile".equals(kind)) icon = R.drawable.ic_nav_profile;
+        else if ("payment".equals(kind)) icon = R.drawable.ic_login_wallet;
+        else if ("cancel".equals(kind)) icon = R.drawable.ic_booking_cancelled;
+        else if ("complaint".equals(kind)) icon = R.drawable.ic_login_support;
+        if (icon != 0) {
+            ImageView image = new ImageView(this);
+            image.setImageResource(icon);
+            image.setColorFilter(Color.rgb(221, 42, 92));
+            image.setPadding(dp(10), dp(6), dp(10), dp(6));
+            image.setScaleType(ImageView.ScaleType.FIT_CENTER);
+            return image;
+        }
+        TextView image = text("⌖", 31, Color.rgb(221, 42, 92), false);
+        image.setGravity(Gravity.CENTER);
+        return image;
+    }
+
     private View supportQuickSuggestionRow() {
         LinearLayout row = horizontal();
+        row.setGravity(Gravity.CENTER_VERTICAL);
         row.addView(supportSuggestionChip("Meri booking kahan hai?"));
         row.addView(supportSuggestionChip("Partner late hai"));
         row.addView(supportSuggestionChip("Refund kaise milega?"));
@@ -14655,13 +16828,15 @@ public class MainActivity extends Activity {
     }
 
     private View supportSuggestionChip(String label) {
-        TextView chip = text(label, 10, Color.rgb(143, 45, 57), false);
+        String icon = label.startsWith("Meri") ? "\u21B6  " : (label.startsWith("Partner") ? "\u263A  " : "\u20B9  ");
+        TextView chip = text(icon + label, 11, Color.rgb(221, 42, 92), false);
         chip.setGravity(Gravity.CENTER);
-        chip.setSingleLine(true);
-        chip.setBackground(stroke(Color.WHITE, Color.rgb(249, 194, 205), dp(17)));
+        chip.setMaxLines(2);
+        chip.setPadding(dp(4), dp(3), dp(4), dp(3));
+        chip.setBackground(stroke(Color.WHITE, Color.rgb(246, 195, 208), dp(20)));
         chip.setOnClickListener(view -> sendSupportMessage(label));
         addPressAnimation(chip);
-        return marginWrap(chip, 0, -1, 3, 3, 3, 3, 1);
+        return marginWrap(chip, 0, dp(48), 3, 3, 3, 3, 1);
     }
 
     private View supportHeroCard() {
@@ -14796,12 +16971,12 @@ public class MainActivity extends Activity {
     private View supportInputBar() {
         LinearLayout bar = horizontal();
         bar.setGravity(Gravity.CENTER_VERTICAL);
-        bar.setPadding(dp(12), dp(7), dp(8), dp(7));
-        bar.setBackground(stroke(Color.WHITE, Color.rgb(249, 176, 191), dp(20)));
-        bar.setElevation(dp(4));
+        bar.setPadding(dp(12), dp(5), dp(7), dp(5));
+        bar.setBackground(stroke(Color.WHITE, Color.rgb(239, 226, 231), dp(26)));
+        bar.setElevation(dp(2));
 
-        TextView sparkle = text("\u2728", 17, Color.rgb(247, 86, 116), false);
-        sparkle.setGravity(Gravity.CENTER);
+        View sparkle = new SupportSparkleIconView(this);
+        sparkle.setContentDescription("Support assistant");
         bar.addView(sparkle, new LinearLayout.LayoutParams(dp(34), dp(42)));
 
         supportInput = new EditText(this);
@@ -14814,29 +16989,42 @@ public class MainActivity extends Activity {
         supportInput.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_CAP_SENTENCES | InputType.TYPE_TEXT_FLAG_MULTI_LINE);
         supportInput.setBackground(round(Color.WHITE, dp(16)));
         supportInput.setPadding(dp(12), 0, dp(12), 0);
+        supportInput.setSelectAllOnFocus(false);
         bar.addView(supportInput, new LinearLayout.LayoutParams(0, -1, 1));
 
-        TextView attach = text("\uD83D\uDCCE", 18, MUTED, false);
-        attach.setGravity(Gravity.CENTER);
+        View attach = new SupportAttachmentIconView(this);
+        attach.setContentDescription("Attach a photo");
         attach.setOnClickListener(view -> startCustomerSupportPhotoCapture());
         addPressAnimation(attach);
-        bar.addView(attach, new LinearLayout.LayoutParams(dp(34), dp(42)));
+        bar.addView(attach, new LinearLayout.LayoutParams(dp(38), dp(46)));
 
-        TextView send = text("\u27A4", 18, Color.WHITE, true);
-        send.setGravity(Gravity.CENTER);
-        send.setBackground(gradient(Color.rgb(255, 103, 131), Color.rgb(244, 72, 105), dp(16)));
+        View send = new SupportSendButtonView(this);
+        send.setContentDescription("Send message");
         send.setOnClickListener(view -> sendSupportMessage(null));
         addPressAnimation(send);
-        bar.addView(send, margin(44, 44, 6, 0, 0, 0));
+        bar.addView(send, margin(48, 48, 6, 0, 0, 0));
         return bar;
     }
 
     private void sendSupportMessage(String preset) {
         String message = preset == null && supportInput != null ? supportInput.getText().toString().trim() : preset;
         if (message == null || message.trim().isEmpty()) {
-            Toast.makeText(this, "Please type your issue", Toast.LENGTH_SHORT).show();
+            SafeToast.makeText(this, "Please type your issue", Toast.LENGTH_SHORT).show();
             return;
         }
+        if (message.length() > MAX_SUPPORT_MESSAGE_CHARS) {
+            SafeToast.makeText(this, "Please keep your message under " + MAX_SUPPORT_MESSAGE_CHARS + " characters.", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        String normalizedMessage = message.trim().toLowerCase(Locale.US);
+        long now = System.currentTimeMillis();
+        if (normalizedMessage.equals(lastSupportSentBody)
+                && now - lastSupportSentAtMillis < SUPPORT_DUPLICATE_SEND_WINDOW_MS) {
+            SafeToast.makeText(this, "Message is already being sent.", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        lastSupportSentBody = normalizedMessage;
+        lastSupportSentAtMillis = now;
         if (supportInput != null) {
             supportInput.setText("");
         }
@@ -14857,12 +17045,36 @@ public class MainActivity extends Activity {
         addSupportMessage(message, true, messageId, isNetworkOnline() ? "Sending" : "Queued");
         showSupportTypingIndicator();
         dispatchCustomerSupportMessage(supportTypeForMessage(message), message, activeTicketId, messageId, "", false);
-        carouselHandler.postDelayed(() -> {
+        if (actualComplaint && backendClient != null) {
+            backendClient.syncSupportTicket(
+                    activeTicketId, messageId, "user", customerName(), message,
+                    supportTypeForMessage(message),
+                    !TextUtils.isEmpty(latestBackendBookingId) ? latestBackendBookingId : (latestBooking == null ? "" : latestBooking.getId()),
+                    "", new BackendClient.JsonCallback() {
+                        @Override public void onSuccess(JSONObject object) {
+                            String officialId = object.optString("publicId", object.optString("ticketId", ""));
+                            if (!isOfficialSupportTicketId(officialId)) officialId = "";
+                            if (!TextUtils.isEmpty(officialId)) activeSupportTicketId = officialId;
+                            renderSupportReply(replyId, message, messageId, officialId);
+                        }
+                        @Override public void onError(String ignored) {
+                            renderSupportReply(replyId, message, messageId, "");
+                        }
+                    });
+            return;
+        }
+        renderSupportReply(replyId, message, messageId, activeTicketId);
+    }
+
+    private void renderSupportReply(int replyId, String message, String messageId, String ticketId) {
+        carouselHandler.post(() -> {
             if (replyId != supportReplySequence || !"support".equals(currentScreen)) {
                 return;
             }
             hideSupportTypingIndicator();
-            String reply = generateSupportReply(message, activeTicketId);
+            String reply = TextUtils.isEmpty(ticketId) && shouldCreateSupportTicket(message)
+                    ? "Your complaint request has been received. The official ticket ID will appear after secure server confirmation."
+                    : generateSupportReply(message, ticketId);
             addSupportMessage(reply, false);
             updateSupportMessageStatus(messageId, "Seen");
             if (shouldShowSupportBookingCard(message)) {
@@ -14871,12 +17083,7 @@ public class MainActivity extends Activity {
             if (shouldShowSupportFeedback(message)) {
                 showSupportFeedbackPopup();
             }
-        }, supportReplyDelayMs(message));
-    }
-
-    private int supportReplyDelayMs(String message) {
-        int length = message == null ? 0 : message.length();
-        return Math.min(1800, 850 + (length * 16));
+        });
     }
 
     private void showSupportTypingIndicator() {
@@ -14930,6 +17137,26 @@ public class MainActivity extends Activity {
         if (supportMessages == null) {
             return;
         }
+        long renderedAt = System.currentTimeMillis();
+        if (!TextUtils.isEmpty(messageId) && supportRenderedMessageIds.containsKey(messageId)) {
+            updateSupportMessageStatus(messageId, status);
+            return;
+        }
+        if (fromUser) {
+            String bodyKey = message == null ? "" : message.trim().toLowerCase(Locale.US);
+            Long previousRenderedAt = supportRenderedUserBodies.get(bodyKey);
+            if (!TextUtils.isEmpty(bodyKey)
+                    && previousRenderedAt != null
+                    && renderedAt - previousRenderedAt < SUPPORT_DUPLICATE_SEND_WINDOW_MS) {
+                return;
+            }
+            if (!TextUtils.isEmpty(bodyKey)) {
+                supportRenderedUserBodies.put(bodyKey, renderedAt);
+            }
+        }
+        if (!TextUtils.isEmpty(messageId)) {
+            supportRenderedMessageIds.put(messageId, true);
+        }
         removeSupportFeedbackPopup();
         LinearLayout row = horizontal();
         row.setGravity(fromUser ? Gravity.RIGHT : Gravity.LEFT | Gravity.TOP);
@@ -14943,7 +17170,7 @@ public class MainActivity extends Activity {
         bubble.setBackground(fromUser
                 ? round(Color.rgb(255, 240, 245), dp(16))
                 : stroke(Color.WHITE, Color.rgb(235, 226, 226), dp(16)));
-        stack.addView(bubble, new LinearLayout.LayoutParams(dp(fromUser ? 252 : 266), -2));
+        stack.addView(bubble, new LinearLayout.LayoutParams(dp(fromUser ? 232 : 246), -2));
         TextView time = text(supportTimeLabel(), 10, Color.rgb(145, 135, 135), false);
         time.setGravity(fromUser ? Gravity.RIGHT : Gravity.LEFT);
         if (fromUser && !TextUtils.isEmpty(status)) {
@@ -14959,13 +17186,213 @@ public class MainActivity extends Activity {
         mainScroll.post(() -> mainScroll.smoothScrollTo(0, screenContent.getBottom()));
     }
 
+    private View supportHeaderAvatar() {
+        FrameLayout holder = new FrameLayout(this);
+        holder.setClipChildren(false);
+        holder.setClipToPadding(false);
+        View avatar = supportBotIcon();
+        holder.addView(avatar, new FrameLayout.LayoutParams(-1, -1));
+        TextView online = text("", 1, Color.TRANSPARENT, false);
+        online.setContentDescription("Support is online");
+        online.setBackground(stroke(Color.rgb(32, 190, 105), Color.WHITE, dp(9)));
+        FrameLayout.LayoutParams onlineParams = new FrameLayout.LayoutParams(dp(12), dp(12), Gravity.RIGHT | Gravity.BOTTOM);
+        onlineParams.setMargins(0, 0, -dp(1), -dp(1));
+        holder.addView(online, onlineParams);
+        return holder;
+    }
+
     private View supportBotIcon() {
-        TextView icon = text("\uD83E\uDD16", 15, Color.WHITE, true);
-        icon.setGravity(Gravity.CENTER);
-        icon.setIncludeFontPadding(false);
-        icon.setBackground(round(GREEN, dp(15)));
-        icon.setElevation(dp(2));
+        View icon = new SupportBotAvatarView(this);
+        icon.setContentDescription("Support assistant");
         return icon;
+    }
+
+    /** Compact vector-style assistant avatar so the UI never falls back to inconsistent emoji art. */
+    private final class SupportBotAvatarView extends View {
+        private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
+
+        SupportBotAvatarView(Activity context) {
+            super(context);
+            setLayerType(View.LAYER_TYPE_SOFTWARE, null);
+        }
+
+        @Override protected void onDraw(Canvas canvas) {
+            super.onDraw(canvas);
+            float w = getWidth();
+            float h = getHeight();
+            float side = Math.min(w, h);
+            float inset = Math.max(1f, side * .035f);
+            float corner = side * .26f;
+            RectF outer = new RectF(inset, inset, w - inset, h - inset);
+            paint.setStyle(Paint.Style.FILL);
+            paint.setShadowLayer(side * .08f, 0, side * .04f, Color.argb(65, 190, 0, 42));
+            paint.setShader(new LinearGradient(0, 0, w, h,
+                    new int[]{Color.rgb(226, 27, 54), Color.rgb(244, 63, 94), Color.rgb(251, 113, 133)},
+                    null, Shader.TileMode.CLAMP));
+            canvas.drawRoundRect(outer, corner, corner, paint);
+            paint.clearShadowLayer();
+            paint.setShader(null);
+
+            float bodyInset = side * .12f;
+            RectF body = new RectF(bodyInset, bodyInset, w - bodyInset, h - bodyInset);
+            paint.setColor(Color.rgb(26, 29, 37));
+            canvas.drawRoundRect(body, side * .20f, side * .20f, paint);
+            paint.setColor(Color.rgb(49, 24, 32));
+            canvas.drawRoundRect(new RectF(body.left + side * .025f, body.top + side * .025f,
+                    body.right - side * .025f, body.bottom - side * .025f), side * .16f, side * .16f, paint);
+
+            float eyeY = side * .47f;
+            paint.setColor(Color.rgb(255, 220, 222));
+            canvas.drawCircle(side * .37f, eyeY, side * .055f, paint);
+            canvas.drawCircle(side * .63f, eyeY, side * .055f, paint);
+            paint.setColor(Color.rgb(226, 27, 54));
+            canvas.drawCircle(side * .37f, eyeY, side * .022f, paint);
+            canvas.drawCircle(side * .63f, eyeY, side * .022f, paint);
+            paint.setStyle(Paint.Style.STROKE);
+            paint.setStrokeWidth(Math.max(1.5f, side * .037f));
+            paint.setStrokeCap(Paint.Cap.ROUND);
+            paint.setColor(Color.rgb(255, 218, 221));
+            RectF smile = new RectF(side * .38f, side * .48f, side * .62f, side * .69f);
+            canvas.drawArc(smile, 25f, 130f, false, paint);
+            paint.setStrokeWidth(Math.max(1f, side * .025f));
+            canvas.drawLine(side * .50f, body.top - side * .02f, side * .50f, side * .005f, paint);
+            paint.setStyle(Paint.Style.FILL);
+            paint.setColor(Color.rgb(255, 183, 188));
+            canvas.drawCircle(side * .50f, side * .045f, side * .035f, paint);
+        }
+    }
+
+    private final class SupportSecurityIconView extends View {
+        private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
+
+        SupportSecurityIconView(Activity context) { super(context); }
+
+        @Override protected void onDraw(Canvas canvas) {
+            float side = Math.min(getWidth(), getHeight());
+            paint.setStyle(Paint.Style.FILL);
+            paint.setColor(Color.rgb(255, 239, 245));
+            canvas.drawCircle(getWidth() / 2f, getHeight() / 2f, side * .48f, paint);
+            Path shield = new Path();
+            float cx = getWidth() / 2f;
+            float top = getHeight() * .20f;
+            shield.moveTo(cx, top);
+            shield.lineTo(cx + side * .25f, top + side * .10f);
+            shield.lineTo(cx + side * .21f, top + side * .43f);
+            shield.quadTo(cx, top + side * .64f, cx - side * .21f, top + side * .43f);
+            shield.lineTo(cx - side * .25f, top + side * .10f);
+            shield.close();
+            paint.setColor(Color.rgb(226, 27, 54));
+            canvas.drawPath(shield, paint);
+            paint.setColor(Color.WHITE);
+            paint.setStyle(Paint.Style.STROKE);
+            paint.setStrokeWidth(Math.max(1.8f, side * .065f));
+            paint.setStrokeCap(Paint.Cap.ROUND);
+            canvas.drawLine(cx - side * .11f, top + side * .29f, cx - side * .025f, top + side * .38f, paint);
+            canvas.drawLine(cx - side * .025f, top + side * .38f, cx + side * .14f, top + side * .22f, paint);
+        }
+    }
+
+    private final class SupportLockIconView extends View {
+        private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
+
+        SupportLockIconView(Activity context) { super(context); }
+
+        @Override protected void onDraw(Canvas canvas) {
+            float side = Math.min(getWidth(), getHeight());
+            float cx = getWidth() / 2f;
+            float cy = getHeight() / 2f;
+            paint.setStyle(Paint.Style.FILL);
+            paint.setColor(Color.rgb(255, 249, 226));
+            canvas.drawCircle(cx, cy, side * .43f, paint);
+            paint.setColor(Color.rgb(226, 27, 54));
+            RectF body = new RectF(cx - side * .23f, cy - side * .02f, cx + side * .23f, cy + side * .25f);
+            canvas.drawRoundRect(body, side * .07f, side * .07f, paint);
+            paint.setStyle(Paint.Style.STROKE);
+            paint.setStrokeWidth(Math.max(1.5f, side * .07f));
+            paint.setColor(Color.rgb(226, 27, 54));
+            canvas.drawArc(new RectF(cx - side * .16f, cy - side * .28f, cx + side * .16f, cy + side * .07f), 185f, 170f, false, paint);
+            paint.setStyle(Paint.Style.FILL);
+            paint.setColor(Color.WHITE);
+            canvas.drawCircle(cx, cy + side * .10f, side * .035f, paint);
+        }
+    }
+
+    private final class SupportSparkleIconView extends View {
+        private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
+
+        SupportSparkleIconView(Activity context) { super(context); }
+
+        @Override protected void onDraw(Canvas canvas) {
+            float cx = getWidth() * .52f;
+            float cy = getHeight() * .50f;
+            float r = Math.min(getWidth(), getHeight()) * .30f;
+            paint.setColor(Color.rgb(226, 27, 54));
+            paint.setStyle(Paint.Style.FILL);
+            Path star = new Path();
+            star.moveTo(cx, cy - r);
+            star.lineTo(cx + r * .28f, cy - r * .28f);
+            star.lineTo(cx + r, cy);
+            star.lineTo(cx + r * .28f, cy + r * .28f);
+            star.lineTo(cx, cy + r);
+            star.lineTo(cx - r * .28f, cy + r * .28f);
+            star.lineTo(cx - r, cy);
+            star.lineTo(cx - r * .28f, cy - r * .28f);
+            star.close();
+            canvas.drawPath(star, paint);
+            paint.setColor(Color.rgb(251, 113, 133));
+            canvas.drawCircle(getWidth() * .20f, getHeight() * .28f, r * .18f, paint);
+        }
+    }
+
+    private final class SupportAttachmentIconView extends View {
+        private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
+
+        SupportAttachmentIconView(Activity context) { super(context); }
+
+        @Override protected void onDraw(Canvas canvas) {
+            float side = Math.min(getWidth(), getHeight());
+            paint.setStyle(Paint.Style.STROKE);
+            paint.setStrokeWidth(Math.max(2f, side * .07f));
+            paint.setStrokeCap(Paint.Cap.ROUND);
+            paint.setColor(Color.rgb(118, 127, 140));
+            canvas.save();
+            canvas.rotate(-38f, getWidth() / 2f, getHeight() / 2f);
+            RectF outer = new RectF(getWidth() * .34f, getHeight() * .16f, getWidth() * .66f, getHeight() * .84f);
+            canvas.drawRoundRect(outer, side * .17f, side * .17f, paint);
+            RectF inner = new RectF(getWidth() * .41f, getHeight() * .25f, getWidth() * .59f, getHeight() * .75f);
+            canvas.drawRoundRect(inner, side * .09f, side * .09f, paint);
+            canvas.restore();
+        }
+    }
+
+    private final class SupportSendButtonView extends View {
+        private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
+
+        SupportSendButtonView(Activity context) {
+            super(context);
+            setLayerType(View.LAYER_TYPE_SOFTWARE, null);
+        }
+
+        @Override protected void onDraw(Canvas canvas) {
+            float side = Math.min(getWidth(), getHeight());
+            float cx = getWidth() / 2f;
+            float cy = getHeight() / 2f;
+            paint.setStyle(Paint.Style.FILL);
+            paint.setShadowLayer(side * .10f, 0, side * .04f, Color.argb(75, 190, 0, 42));
+            paint.setShader(new LinearGradient(0, 0, getWidth(), getHeight(),
+                    Color.rgb(238, 38, 91), Color.rgb(190, 18, 67), Shader.TileMode.CLAMP));
+            canvas.drawCircle(cx, cy, side * .45f, paint);
+            paint.clearShadowLayer();
+            paint.setShader(null);
+            Path plane = new Path();
+            plane.moveTo(cx - side * .20f, cy - side * .16f);
+            plane.lineTo(cx + side * .23f, cy);
+            plane.lineTo(cx - side * .20f, cy + side * .16f);
+            plane.lineTo(cx - side * .07f, cy);
+            plane.close();
+            paint.setColor(Color.WHITE);
+            canvas.drawPath(plane, paint);
+        }
     }
 
     private String supportTimeLabel() {
@@ -14988,6 +17415,12 @@ public class MainActivity extends Activity {
         if (TextUtils.isEmpty(messageId)) {
             return;
         }
+        String previous = supportDeliveryStates.get(messageId);
+        if (supportDeliveryRank(previous) >= supportDeliveryRank("Sent")
+                && supportDeliveryRank(status) < supportDeliveryRank("Sent")) {
+            return;
+        }
+        supportDeliveryStates.put(messageId, status == null ? "" : status);
         TextView view = supportStatusViews.get(messageId);
         if (view != null) {
             view.setText(supportStatusText(status));
@@ -14997,6 +17430,18 @@ public class MainActivity extends Activity {
             view.setTextColor(color);
         }
         persistCustomerSupportDeliveryStatus(messageId, status);
+    }
+
+    private int supportDeliveryRank(String status) {
+        if (status == null) return 0;
+        String normalized = status.trim().toLowerCase(Locale.US);
+        if (normalized.contains("seen")) return 60;
+        if (normalized.contains("delivered")) return 50;
+        if (normalized.contains("sent")) return 40;
+        if (normalized.contains("uploading") || normalized.contains("sending") || normalized.contains("retrying")) return 20;
+        if (normalized.contains("queued")) return 10;
+        if (normalized.contains("failed")) return 5;
+        return 0;
     }
 
     private void persistCustomerSupportDeliveryStatus(String messageId, String status) {
@@ -15040,24 +17485,24 @@ public class MainActivity extends Activity {
             Intent intent = new Intent(MediaStore.ACTION_IMAGE_CAPTURE);
             startActivityForResult(intent, SUPPORT_CAMERA_REQUEST);
         } catch (Exception error) {
-            Toast.makeText(this, "Unable to open the camera.", Toast.LENGTH_SHORT).show();
+            SafeToast.makeText(this, "Unable to open the camera.", Toast.LENGTH_SHORT).show();
         }
     }
 
     private void handleSupportCameraResult(Intent data) {
         if (data == null || data.getExtras() == null) {
-            Toast.makeText(this, "Photo capture failed", Toast.LENGTH_SHORT).show();
+            SafeToast.makeText(this, "Photo capture failed", Toast.LENGTH_SHORT).show();
             return;
         }
         Object bitmap = data.getExtras().get("data");
         if (!(bitmap instanceof Bitmap)) {
-            Toast.makeText(this, "Photo capture failed", Toast.LENGTH_SHORT).show();
+            SafeToast.makeText(this, "Photo capture failed", Toast.LENGTH_SHORT).show();
             return;
         }
         File file = saveSupportBitmap((Bitmap) bitmap);
         if (file == null) {
             updateSupportMessageStatus("", "Failed - tap retry");
-            Toast.makeText(this, "Unable to save the photo.", Toast.LENGTH_SHORT).show();
+            SafeToast.makeText(this, "Unable to save the photo.", Toast.LENGTH_SHORT).show();
             return;
         }
         String messageId = supportMessageId("CUSPHOTO");
@@ -15117,7 +17562,7 @@ public class MainActivity extends Activity {
         }
         if (file.length() > SUPPORT_UPLOAD_MAX_BYTES) {
             updateSupportMessageStatus(messageId, "Failed - retake photo");
-            Toast.makeText(this, "Photo too large. Please retake a clear photo.", Toast.LENGTH_SHORT).show();
+            SafeToast.makeText(this, "Photo too large. Please retake a clear photo.", Toast.LENGTH_SHORT).show();
             return;
         }
         if (firebaseStorage == null) {
@@ -15187,7 +17632,11 @@ public class MainActivity extends Activity {
                 })
                 .addOnFailureListener(error -> {
                     queueCustomerSupportMessage(type, message, ticketId, messageId, hasAttachment ? attachmentPath : "");
-                    updateSupportMessageStatus(messageId, "Failed - tap retry");
+                    if (supportDeliveryRank(supportDeliveryStates.get(messageId)) < supportDeliveryRank("Sent")) {
+                        updateSupportMessageStatus(messageId, "Failed - tap retry");
+                    } else {
+                        removeQueuedCustomerSupportMessage(messageId);
+                    }
                 });
     }
 
@@ -15602,6 +18051,10 @@ public class MainActivity extends Activity {
         return "LOCAL-" + java.util.UUID.randomUUID();
     }
 
+    private boolean isOfficialSupportTicketId(String value) {
+        return value != null && value.trim().toUpperCase(Locale.US).matches("^ASCU[0-9A-Z-]{4,}$");
+    }
+
     private void showProfileInfoDialog(String title, String body) {
         new AlertDialog.Builder(this)
                 .setTitle(title)
@@ -15611,22 +18064,88 @@ public class MainActivity extends Activity {
     }
 
     private void confirmBooking(Service service) {
+        if (bookingAreaValidationInFlight) return;
+        validateBookingServiceArea(service);
+    }
+
+    private void validateBookingServiceArea(Service service) {
+        if (!isBookingAddressReady()) {
+            confirmBookingAfterServiceAreaValidation(service);
+            return;
+        }
+        bookingAreaValidationInFlight = true;
+        bookingAreaUnavailable = false;
+        final int generation = ++bookingAreaValidationGeneration;
+        if ("current".equals(bookingAddressMode) && hasServiceLocation) {
+            finishBookingServiceAreaValidation(service, generation,
+                    ServiceAreaPolicy.evaluate(serviceLat, serviceLng), serviceLat, serviceLng);
+            return;
+        }
+        final String selectedAddress = bookingAddressPreview();
+        executeGeocoderTask(() -> {
+            ServiceAreaPolicy.State state = ServiceAreaPolicy.State.UNKNOWN;
+            double latitude = Double.NaN;
+            double longitude = Double.NaN;
+            try {
+                List<Address> matches = new Geocoder(MainActivity.this, Locale.getDefault())
+                        .getFromLocationName(selectedAddress, 1);
+                if (matches != null && !matches.isEmpty()) {
+                    latitude = matches.get(0).getLatitude();
+                    longitude = matches.get(0).getLongitude();
+                    state = ServiceAreaPolicy.evaluate(latitude, longitude);
+                }
+            } catch (Exception ignored) { }
+            final ServiceAreaPolicy.State result = state;
+            final double resolvedLat = latitude;
+            final double resolvedLng = longitude;
+            runOnUiThread(() -> finishBookingServiceAreaValidation(
+                    service, generation, result, resolvedLat, resolvedLng));
+        });
+    }
+
+    private void finishBookingServiceAreaValidation(Service service, int generation,
+            ServiceAreaPolicy.State state, double latitude, double longitude) {
+        if (generation != bookingAreaValidationGeneration || activityDestroyed || isFinishing() || isDestroyed()) return;
+        bookingAreaValidationInFlight = false;
+        if (state == ServiceAreaPolicy.State.UNAVAILABLE) {
+            bookingAreaUnavailable = true;
+            showBookingConfirm(service);
+            mainScroll.post(() -> mainScroll.smoothScrollTo(0, 0));
+            return;
+        }
+        if (state != ServiceAreaPolicy.State.AVAILABLE) {
+            SafeToast.makeText(this, "We couldn't verify this service location. Check the address and try again.", Toast.LENGTH_LONG).show();
+            return;
+        }
+        serviceLat = latitude;
+        serviceLng = longitude;
+        hasServiceLocation = true;
+        bookingAreaUnavailable = false;
+        confirmBookingAfterServiceAreaValidation(service);
+    }
+
+    private void confirmBookingAfterServiceAreaValidation(Service service) {
         if (bookingSubmissionInFlight) {
-            Toast.makeText(this, "Booking request already in progress", Toast.LENGTH_SHORT).show();
+            SafeToast.makeText(this, "Booking request already in progress", Toast.LENGTH_SHORT).show();
             return;
         }
         if (!isBookingAddressReady()) {
-            Toast.makeText(this, bookingAddressError(), Toast.LENGTH_SHORT).show();
+            SafeToast.makeText(this, bookingAddressError(), Toast.LENGTH_SHORT).show();
             showBooking(service);
             return;
         }
         bookingPrimaryPhone = authenticatedPrimaryPhone();
         if (!isValidCustomerMobile(bookingPrimaryPhone)) {
-            Toast.makeText(this, "Add a valid primary contact number", Toast.LENGTH_SHORT).show();
+            SafeToast.makeText(this, "Add a valid primary contact number", Toast.LENGTH_SHORT).show();
             showBooking(service);
             return;
         }
         recoverCustomerIdentityFromFirebase();
+        String remoteValidation = remoteBookingValidationError();
+        if (!remoteValidation.isEmpty()) {
+            SafeToast.makeText(this, remoteValidation, Toast.LENGTH_SHORT).show();
+            return;
+        }
         String problem = problemInput == null ? "" : problemInput.getText().toString().trim();
         if ("cleaning".equals(service.getId())) {
             problem = selectedCleaningType;
@@ -15636,7 +18155,7 @@ public class MainActivity extends Activity {
         }
         if ("laundry".equals(service.getId())) {
             if (selectedLaundryItems.isEmpty()) {
-                Toast.makeText(this, "Please select at least one laundry item.", Toast.LENGTH_SHORT).show();
+                SafeToast.makeText(this, "Please select at least one laundry item.", Toast.LENGTH_SHORT).show();
                 return;
             }
             String laundryDetails = selectedLaundryServiceType + " | Items: " + laundryItemsSummary();
@@ -15666,44 +18185,125 @@ public class MainActivity extends Activity {
         submitPendingBookingWithRetry();
     }
 
+    private View serviceAreaUnavailableBanner() {
+        LinearLayout banner = horizontal();
+        banner.setGravity(Gravity.CENTER_VERTICAL);
+        banner.setPadding(dp(14), dp(7), dp(8), dp(7));
+        banner.setBackgroundColor(Color.rgb(255, 248, 249));
+        banner.setElevation(0);
+
+        TextView cloud = text("☁", 20, Color.rgb(162, 202, 210), true);
+        cloud.setGravity(Gravity.CENTER);
+        cloud.setBackground(round(Color.rgb(255, 232, 237), dp(14)));
+        banner.addView(cloud, new LinearLayout.LayoutParams(dp(40), dp(40)));
+
+        LinearLayout copy = vertical();
+        copy.setPadding(dp(9), 0, dp(5), 0);
+        TextView title = text("We are currently unavailable at your location", 10, Color.rgb(126, 0, 18), true);
+        title.setSingleLine(true);
+        title.setEllipsize(TextUtils.TruncateAt.END);
+        copy.addView(title);
+        TextView message = text("ApnaServo is currently available only in Guwahati. We’ll be available in your area soon.", 9, Color.rgb(91, 86, 88), false);
+        message.setMaxLines(2);
+        message.setLineSpacing(dp(1), 1f);
+        copy.addView(message, margin(-1, -2, 0, 2, 0, 0));
+        banner.addView(copy, new LinearLayout.LayoutParams(0, -2, 1));
+
+        TextView close = text("×", 22, Color.rgb(74, 78, 82), false);
+        close.setGravity(Gravity.CENTER);
+        close.setContentDescription("Dismiss availability message");
+        close.setOnClickListener(view -> dismissServiceAreaBanner(banner, close));
+        addPressAnimation(close);
+        banner.addView(close, new LinearLayout.LayoutParams(dp(32), dp(40)));
+        banner.setAlpha(0f);
+        banner.setTranslationY(-dp(8));
+        banner.animate().alpha(1f).translationY(0f).setDuration(220).start();
+        return banner;
+    }
+
+    private void dismissServiceAreaBanner(View banner, View closeButton) {
+        if (banner == null || banner.getParent() == null || !banner.isEnabled()) return;
+        if ("home".equals(currentScreen)) serviceAreaBannerDismissedOnCurrentHome = true;
+        banner.setEnabled(false);
+        if (closeButton != null) closeButton.setEnabled(false);
+        banner.post(() -> {
+            int startHeight = banner.getHeight();
+            if (startHeight <= 0) {
+                ViewParentCompat.remove(banner);
+                return;
+            }
+            banner.animate().cancel();
+            banner.animate()
+                    .alpha(0f)
+                    .translationY(-dp(16))
+                    .setDuration(650)
+                    .setInterpolator(new AccelerateDecelerateInterpolator())
+                    .start();
+            ValueAnimator collapse = ValueAnimator.ofInt(startHeight, 0);
+            collapse.setDuration(700);
+            collapse.setInterpolator(new AccelerateDecelerateInterpolator());
+            collapse.addUpdateListener(animation -> {
+                ViewGroup.LayoutParams params = banner.getLayoutParams();
+                if (params == null) return;
+                params.height = (int) animation.getAnimatedValue();
+                banner.setLayoutParams(params);
+            });
+            collapse.addListener(new Animator.AnimatorListener() {
+                @Override public void onAnimationStart(Animator animation) { }
+                @Override public void onAnimationRepeat(Animator animation) { }
+                @Override public void onAnimationCancel(Animator animation) { ViewParentCompat.remove(banner); }
+                @Override public void onAnimationEnd(Animator animation) { ViewParentCompat.remove(banner); }
+            });
+            collapse.start();
+        });
+    }
+
     private void showOptimisticBookingConfirmation(Booking booking) {
-        latestBooking = booking;
-        bookingStore.save(booking);
-        selectedTrackBookingId = booking.getId();
-        putSecureString(KEY_PENDING_BOOKING_SUBMISSION, booking.getId());
+        bookingBreadcrumb("BOOKING_CREATE_START", "submitting", "server_confirmation_required");
+        persistPendingBookingSubmission(booking);
         bookingSuccessSplashShownForId = "";
         paymentVerificationWaitingBookingId = "";
-        awaitingPartnerAssignment = true;
-        partnerAssigned = false;
-        remoteBookingStatus = "pending";
-        remoteFinalAmount = 0;
-        remoteFinalAmountBookingId = "";
-        remoteQuoteStatus = "none";
-        remoteQuoteExpiresAtMillis = 0L;
-        remoteQuoteCounterAmount = 0;
-        remoteQuoteCounterMessage = "";
-        assignedPartnerName = "ApnaServo Partner";
-        assignedPartnerPhotoUrl = "";
-        bookingPopupUnlocked = true;
-        bookingStatusCache.put(booking.getId(), "pending");
-        showBookingConfirmedScreen();
+        showBookingSubmissionWait(false, "Creating a secure booking ID and sending your request to nearby partners.");
+    }
+
+    private void persistPendingBookingSubmission(Booking booking) {
+        if (booking == null) return;
+        try {
+            putSecureString(KEY_PENDING_BOOKING_SUBMISSION, booking.toJson().toString());
+        } catch (Exception error) {
+            putSecureString(KEY_PENDING_BOOKING_SUBMISSION, booking.getId());
+        }
     }
 
     private void restorePendingBookingSubmission() {
         if (pendingBooking != null || bookingStore == null) {
             return;
         }
-        String pendingId = secureString(KEY_PENDING_BOOKING_SUBMISSION, "");
-        if (TextUtils.isEmpty(pendingId)) {
+        String pendingValue = secureString(KEY_PENDING_BOOKING_SUBMISSION, "");
+        if (TextUtils.isEmpty(pendingValue)) {
             return;
         }
+        if (pendingValue.trim().startsWith("{")) {
+            try {
+                Booking restored = Booking.fromJson(new JSONObject(pendingValue));
+                pendingBooking = restored;
+                pendingBookingService = primaryService(restored);
+                bookingSubmissionInFlight = true;
+                pendingBookingAttempts = 0;
+                if (isNetworkOnline()) carouselHandler.postDelayed(this::submitPendingBookingWithRetry, 250L);
+                return;
+            } catch (Exception ignored) {
+                removeSecureString(KEY_PENDING_BOOKING_SUBMISSION);
+                return;
+            }
+        }
+        String pendingId = pendingValue;
         for (Booking booking : bookingStore.load()) {
             if (!pendingId.equals(booking.getId())) {
                 continue;
             }
             pendingBooking = booking;
             pendingBookingService = primaryService(booking);
-            latestBooking = booking;
             bookingSubmissionInFlight = true;
             pendingBookingAttempts = 0;
             if (isNetworkOnline()) {
@@ -15727,7 +18327,9 @@ public class MainActivity extends Activity {
             return;
         }
         for (Booking booking : bookings) {
-            if (booking != null && !TextUtils.isEmpty(booking.getId()) && !bookingStatusCache.containsKey(booking.getId())) {
+            if (booking != null && !TextUtils.isEmpty(booking.getId())
+                    && !isClientBookingRequestId(booking.getId())
+                    && !bookingStatusCache.containsKey(booking.getId())) {
                 bookingStatusCache.put(booking.getId(), normalizeRemoteStatus(booking.getStatus()));
             }
         }
@@ -15739,22 +18341,28 @@ public class MainActivity extends Activity {
         boolean explicitSelection = preserveExplicitSelection && !TextUtils.isEmpty(selectedTrackBookingId);
         if (!TextUtils.isEmpty(wanted)) {
             for (Booking booking : bookings) {
-                if (booking != null && wanted.equals(booking.getId())) {
+                if (booking != null && !isClientBookingRequestId(booking.getId()) && wanted.equals(booking.getId())) {
                     restored = booking;
                     break;
                 }
             }
         }
-        if (restored == null || (!explicitSelection && isBookingClosed(restored))) {
+        if (restored == null || (!explicitSelection && (isBookingClosed(restored) || isStaleHomeBookingFooter(restored)))) {
             for (Booking booking : bookings) {
-                if (booking != null && !isBookingClosed(booking)) {
+                if (booking != null && !isClientBookingRequestId(booking.getId())
+                        && !isBookingClosed(booking) && !isStaleHomeBookingFooter(booking)) {
                     restored = booking;
                     break;
                 }
             }
         }
         if (restored == null) {
-            restored = bookings.get(0);
+            for (Booking booking : bookings) {
+                if (booking != null && !isClientBookingRequestId(booking.getId())) {
+                    restored = booking;
+                    break;
+                }
+            }
         }
         if (restored == null || TextUtils.isEmpty(restored.getId())) {
             return;
@@ -15766,8 +18374,24 @@ public class MainActivity extends Activity {
         applyCachedStatusToCurrentBooking();
         restoreFinalAmountForBooking(restored.getId());
         if (!isBookingClosed(restored)) {
-            bookingPopupUnlocked = true;
+            bookingPopupUnlocked = !isStaleHomeBookingFooter(restored);
         }
+    }
+
+    private boolean isStalePendingAssignment(Booking booking) {
+        if (booking == null || !"pending".equals(normalizeRemoteStatus(bookingStatusFor(booking)))) return false;
+        long age = System.currentTimeMillis() - booking.getCreatedAtMillis();
+        long limit = Math.max(5, appControl.assignmentUi.pendingVisibilityMinutes) * 60_000L;
+        return age > limit;
+    }
+
+    private boolean isStaleHomeBookingFooter(Booking booking) {
+        if (booking == null) return false;
+        if (isStalePendingAssignment(booking)) return true;
+        long createdAt = booking.getCreatedAtMillis();
+        if (createdAt <= 0) return false;
+        long age = System.currentTimeMillis() - createdAt;
+        return age > Math.max(1, appControl.assignmentUi.activeFooterVisibilityHours) * 3_600_000L;
     }
 
     private String finalAmountPreferenceKey(String bookingId) {
@@ -15801,63 +18425,38 @@ public class MainActivity extends Activity {
 
     private void showBookingSubmissionWait(boolean failed, String message) {
         if (!failed) {
-            Toast.makeText(this, "Confirming booking...", Toast.LENGTH_SHORT).show();
+            SafeToast.makeText(this, "Confirming your booking...", Toast.LENGTH_SHORT).show();
             return;
         }
-        setCurrentScreen("booking_submitting");
-        showAppChrome();
-        floatingFooter.setVisibility(View.GONE);
-        bottomNav.setVisibility(View.GONE);
-        setActiveNav(null);
-        resetScreen();
-        addBookingTopBar();
-
-        LinearLayout card = bookingPanel(20);
-        card.setGravity(Gravity.CENTER_HORIZONTAL);
-        Service service = pendingBookingService == null ? selectedService : pendingBookingService;
-        if (service != null) {
-            card.addView(serviceLogoView(service, 86, true), new LinearLayout.LayoutParams(dp(86), dp(86)));
+        String customerMessage = TextUtils.isEmpty(message)
+                ? "We couldn't confirm the booking. Check your connection and retry."
+                : message;
+        if (isFinishing() || activityDestroyed) {
+            return;
         }
-        TextView title = text("Booking not created", 22, BLACK, true);
-        title.setGravity(Gravity.CENTER);
-        card.addView(title, margin(-1, -2, 0, 18, 0, 6));
-
-        String bodyText = TextUtils.isEmpty(message) ? "Network issue. Your booking was not confirmed." : message;
-        TextView body = text(bodyText, 13, MUTED, false);
-        body.setGravity(Gravity.CENTER);
-        body.setLineSpacing(dp(2), 1f);
-        card.addView(body, margin(-1, -2, 8, 0, 8, 18));
-
-        LinearLayout status = bookingPanel(14);
-        status.addView(text("Booking ID", 12, MUTED, false));
-        status.addView(text(pendingBooking == null ? "Generating..." : pendingBooking.getId(), 18, ORANGE, true), margin(-1, -2, 0, 3, 0, 4));
-        status.addView(text("No duplicate booking was created.", 12, Color.rgb(202, 65, 65), true));
-        card.addView(status, margin(-1, -2, 0, 0, 0, 16));
-
-        View retry = glassContinueButton("Retry same booking   \u2192", view -> retryPendingBookingNow());
-        card.addView(retry, margin(-1, 54, 0, 0, 0, 10));
-        TextView edit = text("Edit booking details", 14, ORANGE, true);
-        edit.setGravity(Gravity.CENTER);
-        edit.setOnClickListener(view -> {
-            bookingSubmissionInFlight = false;
-            pendingBookingAttempts = 0;
-            showBooking(pendingBookingService == null ? serviceById("ac") : pendingBookingService);
-        });
-        card.addView(edit, margin(-1, 42, 0, 0, 0, 0));
-
-        animateIn(card, 80);
-        screenContent.addView(card, margin(-1, -2, 18, 22, 18, 24));
+        new AlertDialog.Builder(this)
+                .setTitle("Couldn't confirm booking")
+                .setMessage(customerMessage)
+                .setCancelable(true)
+                .setPositiveButton("Retry", (dialog, which) -> retryPendingBookingNow())
+                .setNegativeButton("Edit details", (dialog, which) -> {
+                    bookingSubmissionInFlight = false;
+                    pendingBookingAttempts = 0;
+                    Service service = pendingBookingService == null ? selectedService : pendingBookingService;
+                    showBooking(service == null ? serviceById("ac") : service);
+                })
+                .show();
     }
 
     private void retryPendingBookingNow() {
         if (pendingBooking == null || pendingBookingService == null) {
-            Toast.makeText(this, "Booking details missing. Please book again.", Toast.LENGTH_SHORT).show();
+            SafeToast.makeText(this, "Booking details missing. Please book again.", Toast.LENGTH_SHORT).show();
             showHome();
             return;
         }
         bookingSubmissionInFlight = true;
         pendingBookingAttempts = 0;
-        Toast.makeText(this, "Retrying booking...", Toast.LENGTH_SHORT).show();
+        SafeToast.makeText(this, "Retrying booking...", Toast.LENGTH_SHORT).show();
         submitPendingBookingWithRetry();
     }
 
@@ -15871,11 +18470,12 @@ public class MainActivity extends Activity {
             return;
         }
         if (!isNetworkOnline()) {
-            keepPendingBookingQueued("Booking saved. It will be sent automatically when your internet connection returns.");
+            keepPendingBookingQueued("Booking is not confirmed yet. Reconnect and retry the same request.");
             return;
         }
         pendingBookingAttempts++;
         bookingNetworkRequestActive = true;
+        bookingBreadcrumb("BOOKING_WRITE_START", "pending", "attempt_" + pendingBookingAttempts);
         dispatchBookingToPartnerQueue(pendingBookingService, pendingBooking);
     }
 
@@ -15885,21 +18485,34 @@ public class MainActivity extends Activity {
             carouselHandler.removeCallbacks(pendingBookingRetryRunnable);
             pendingBookingRetryRunnable = null;
         }
-        if (!TextUtils.isEmpty(message)) {
-            Toast.makeText(this, message, Toast.LENGTH_LONG).show();
-        }
+        showBookingSubmissionWait(true, message);
     }
 
     private void completeBookingAfterBackendConfirmation(Service service, Booking booking, JSONObject response) {
+        JSONObject remoteBooking = response == null ? null : response.optJSONObject("booking");
+        if (remoteBooking == null && response != null
+                && (response.has("publicId") || response.has("bookingCode"))) {
+            remoteBooking = response;
+        }
+        String canonicalBookingCode = remoteBooking == null ? "" : remoteBooking.optString("publicId",
+                remoteBooking.optString("bookingCode", "")).trim().toUpperCase(Locale.US);
+        if (!isCanonicalBookingCode(canonicalBookingCode)) {
+            Log.w(BOOKING_LOG, "BOOKING_WRITE_INVALID_RESPONSE bookingObject=" + (remoteBooking != null)
+                    + " canonicalPresent=" + !TextUtils.isEmpty(canonicalBookingCode));
+            bookingNetworkRequestActive = false;
+            bookingSubmissionInFlight = true;
+            keepPendingBookingQueued("The server did not return a valid ASB booking ID. Please retry the same booking.");
+            return;
+        }
+        bookingBreadcrumb("BOOKING_WRITE_SUCCESS", "pending", "backend_confirmation");
         bookingNetworkRequestActive = false;
         bookingSubmissionInFlight = false;
         if (pendingBookingRetryRunnable != null) {
             carouselHandler.removeCallbacks(pendingBookingRetryRunnable);
             pendingBookingRetryRunnable = null;
         }
-        latestBooking = booking;
-        selectedTrackBookingId = booking.getId();
-        bookingStore.save(latestBooking);
+        String requestId = booking.getId();
+        latestBooking = booking.withId(canonicalBookingCode);
         removeSecureString(KEY_PENDING_BOOKING_SUBMISSION);
         awaitingPartnerAssignment = true;
         partnerAssigned = false;
@@ -15913,18 +18526,16 @@ public class MainActivity extends Activity {
         assignedPartnerName = "ApnaServo Partner";
         assignedPartnerPhotoUrl = "";
         bookingPopupUnlocked = true;
-        bookingStatusCache.put(booking.getId(), "pending");
-        JSONObject remoteBooking = response.optJSONObject("booking");
-        if (remoteBooking != null) {
-            latestBackendBookingId = remoteBooking.optString("_id", remoteBooking.optString("bookingId", ""));
-            saveLatestBackendBookingId();
-            handleBackendBookingEvent("booking:create", remoteBooking);
-            startBackendSocket();
-        } else {
-            latestBackendBookingId = "";
-            removeSecureString(KEY_BACKEND_BOOKING_ID);
-        }
-        Toast.makeText(this, "Booking confirmed. We are finding the best service for you.", Toast.LENGTH_LONG).show();
+        bookingStatusCache.remove(requestId);
+        bookingStatusCache.put(canonicalBookingCode, "pending");
+        bookingStore.remove(requestId);
+        latestBackendBookingId = remoteBooking.optString("_id", remoteBooking.optString("bookingId", ""));
+        selectedTrackBookingId = canonicalBookingCode;
+        bookingStore.save(latestBooking);
+        saveLatestBackendBookingId();
+        handleBackendBookingEvent("booking:create", remoteBooking);
+        startBackendSocket();
+        SafeToast.makeText(this, "Booking confirmed. We are finding the best service for you.", Toast.LENGTH_LONG).show();
         pendingBooking = null;
         pendingBookingService = null;
         pendingBookingAttempts = 0;
@@ -15935,6 +18546,7 @@ public class MainActivity extends Activity {
     }
 
     private void showBookingConfirmedScreen() {
+        bookingBreadcrumb("BOOKING_CONFIRMATION_SCREEN_OPEN", bookingFlowStatus(), "render");
         setCurrentScreen("booking_confirmed");
         removeTransientBookingScreensFromHistory();
         showAppChrome();
@@ -15974,19 +18586,16 @@ public class MainActivity extends Activity {
         pill.setGravity(Gravity.CENTER);
         pill.setSingleLine(true);
         pill.setBackground(stroke(Color.rgb(255, 244, 247), Color.rgb(250, 197, 209), dp(8)));
-        pill.setOnClickListener(view -> Toast.makeText(this, "Booking ID copied", Toast.LENGTH_SHORT).show());
+        pill.setOnClickListener(view -> SafeToast.makeText(this, "Booking ID copied", Toast.LENGTH_SHORT).show());
         addPressAnimation(pill);
         return pill;
     }
 
     private String bookingDisplayId() {
-        if (latestBooking != null && !TextUtils.isEmpty(latestBooking.getId())) {
-            return latestBooking.getId();
+        if (latestBooking != null && isCanonicalBookingCode(latestBooking.getId())) {
+            return latestBooking.getId().trim().toUpperCase(Locale.US);
         }
-        if (!TextUtils.isEmpty(latestBackendBookingId)) {
-            return latestBackendBookingId;
-        }
-        return "Confirmed";
+        return "Booking ID unavailable";
     }
 
     private View bookingFindingPartnerCard() {
@@ -16139,10 +18748,6 @@ public class MainActivity extends Activity {
         rating.setGravity(Gravity.CENTER);
         rating.setBackground(round(BOOKING_THEME, dp(10)));
         score.addView(rating, new LinearLayout.LayoutParams(dp(62), dp(34)));
-        TextView exp = text("8+ years\nexperience", 12, BOOKING_THEME, true);
-        exp.setGravity(Gravity.CENTER);
-        exp.setLineSpacing(dp(1), 1f);
-        score.addView(exp, margin(-1, -2, 0, 6, 0, 0));
         expert.addView(score);
         card.addView(expert);
 
@@ -16165,7 +18770,7 @@ public class MainActivity extends Activity {
         if (!"started".equals(status)) {
             LinearLayout meta = horizontal();
             meta.setGravity(Gravity.CENTER_VERTICAL);
-            String distanceTitle = "arrived".equals(status) ? "0.0 km away" : "2.3 km away";
+            String distanceTitle = livePartnerDistanceLabel(status);
             String etaTitle = "arrived".equals(status) ? "Expected service start" : "Expected arrival";
             String etaBody = "arrived".equals(status) ? "Within 5 minutes\n(around " + timeAfterMinutes(5) + ")" : partnerArrivalDisplay();
             meta.addView(bookingPartnerMetric(BookingFindingArtworkView.LOCATION, distanceTitle, "from your location"), new LinearLayout.LayoutParams(0, -2, 1));
@@ -16255,6 +18860,22 @@ public class MainActivity extends Activity {
         return button;
     }
 
+    private String livePartnerDistanceLabel(String status) {
+        if ("arrived".equals(status)) {
+            return "At your location";
+        }
+        if (!hasPartnerMapLocation || !hasServiceLocation
+                || partnerMapUpdatedAtMillis <= 0L
+                || System.currentTimeMillis() - partnerMapUpdatedAtMillis > 120_000L) {
+            return "Distance updating…";
+        }
+        double km = ServiceAreaPolicy.distanceKm(partnerMapLat, partnerMapLng, serviceLat, serviceLng);
+        if (km < 0.05d) {
+            return "Less than 50 m away";
+        }
+        return String.format(Locale.US, "%.1f km away", km);
+    }
+
     private View bookingPartnerMetric(int icon, String title, String body) {
         LinearLayout row = horizontal();
         row.setGravity(Gravity.CENTER_VERTICAL);
@@ -16285,7 +18906,7 @@ public class MainActivity extends Activity {
         copyButton.setGravity(Gravity.CENTER);
         copyButton.addView(new BookingFindingArtworkView(BookingFindingArtworkView.COPY), new LinearLayout.LayoutParams(dp(18), dp(18)));
         copyButton.addView(text("Copy ID", 12, BOOKING_THEME, true), margin(-2, -2, 4, 0, 0, 0));
-        copyButton.setOnClickListener(view -> Toast.makeText(this, "Booking ID copied", Toast.LENGTH_SHORT).show());
+        copyButton.setOnClickListener(view -> SafeToast.makeText(this, "Booking ID copied", Toast.LENGTH_SHORT).show());
         addPressAnimation(copyButton);
         titleRow.addView(copyButton, new LinearLayout.LayoutParams(dp(78), dp(34)));
         card.addView(titleRow);
@@ -16359,7 +18980,7 @@ public class MainActivity extends Activity {
         heading.addView(idCopy, new LinearLayout.LayoutParams(0, -2, 1));
         TextView copyId = text("\u25A1  Copy", 18, BOOKING_THEME, true);
         copyId.setGravity(Gravity.CENTER);
-        copyId.setOnClickListener(view -> Toast.makeText(this, "Booking ID copied", Toast.LENGTH_SHORT).show());
+        copyId.setOnClickListener(view -> SafeToast.makeText(this, "Booking ID copied", Toast.LENGTH_SHORT).show());
         heading.addView(copyId, new LinearLayout.LayoutParams(dp(118), dp(44)));
         card.addView(heading);
         card.addView(insetDivider(0), margin(-1, 1, 0, 14, 0, 14));
@@ -16507,7 +19128,8 @@ public class MainActivity extends Activity {
         if (TextUtils.isEmpty(bookingCode) || booking == null) {
             return;
         }
-        String photo = booking.optString("partnerPhotoUrl", booking.optString("partnerPhoto", ""));
+        String photo = booking.optString("serviceContactPhotoUrl",
+                booking.optString("partnerPhotoUrl", booking.optString("partnerPhoto", "")));
         if (TextUtils.isEmpty(photo)) {
             photo = booking.optString("partnerProfilePhoto", booking.optString("partnerImageUrl", ""));
         }
@@ -16526,37 +19148,104 @@ public class MainActivity extends Activity {
         }
     }
 
+    private void rememberLaundryAssignment(JSONObject booking) {
+        if (booking == null || !"laundry".equalsIgnoreCase(booking.optString("serviceCategory", ""))) return;
+        JSONObject assignment = booking.optJSONObject("laundryAssignment");
+        remoteLaundryShopName = booking.optString("laundryShopName", "").trim();
+        remoteLaundryShopLocation = booking.optString("laundryShopLocation", "").trim();
+        if (assignment == null) {
+            remoteLaundryStaffName = "";
+            remoteLaundryStaffRole = "";
+            remoteLaundryStaffPhotoUrl = "";
+            remoteLaundryTaskStatus = "unassigned";
+            return;
+        }
+        if (TextUtils.isEmpty(remoteLaundryShopName)) remoteLaundryShopName = assignment.optString("shopName", "").trim();
+        if (TextUtils.isEmpty(remoteLaundryShopLocation)) remoteLaundryShopLocation = assignment.optString("shopLocation", "").trim();
+        remoteLaundryStaffName = assignment.optString("staffName", "").trim();
+        remoteLaundryStaffRole = assignment.optString("staffRole", "Laundry Staff").trim();
+        remoteLaundryStaffPhotoUrl = assignment.optString("staffPhotoUrl", "").trim();
+        remoteLaundryTaskStatus = assignment.optString("taskStatus", "unassigned").trim();
+        if (!TextUtils.isEmpty(remoteLaundryStaffPhotoUrl)) assignedPartnerPhotoUrl = remoteLaundryStaffPhotoUrl;
+    }
+
+    private void discardBlockedServiceBooking() {
+        bookingNetworkRequestActive = false;
+        bookingSubmissionInFlight = false;
+        if (pendingBookingRetryRunnable != null) {
+            carouselHandler.removeCallbacks(pendingBookingRetryRunnable);
+            pendingBookingRetryRunnable = null;
+        }
+        pendingBooking = null;
+        pendingBookingService = null;
+        pendingBookingAttempts = 0;
+        removeSecureString(KEY_PENDING_BOOKING_SUBMISSION);
+    }
+
     private void handleBookingSubmitError(String message) {
         bookingNetworkRequestActive = false;
         if (!bookingSubmissionInFlight) {
             return;
         }
         String cleanMessage = NetworkError.safe(message);
+        Log.w(BOOKING_LOG, "BOOKING_WRITE_FAILED reason=" + cleanMessage.replace('\n', ' '));
         String lower = message == null ? "" : message.toLowerCase(Locale.US);
         if (lower.contains("app_maintenance")) {
             appControl = AppControlConfig.withMode(appControl, AppControlConfig.AppMode.MAINTENANCE);
             showGlobalAppStatus();
             return;
         }
-        if (lower.contains("app_temporarily_unavailable")) {
-            appControl = AppControlConfig.withMode(appControl, AppControlConfig.AppMode.TEMPORARILY_UNAVAILABLE);
+        if (lower.contains("app_high_demand")) {
+            appControl = AppControlConfig.withMode(appControl, AppControlConfig.AppMode.HIGH_DEMAND);
             showGlobalAppStatus();
             return;
         }
-        if (lower.contains("app_area_unavailable")) {
-            appControl = AppControlConfig.withMode(appControl, AppControlConfig.AppMode.PARTIALLY_UNAVAILABLE);
-            showGlobalAppStatus();
+        if (lower.contains("service_high_demand")) {
+            Service affected = pendingBookingService == null ? selectedService : pendingBookingService;
+            discardBlockedServiceBooking();
+            showServiceHighDemand(affected);
             return;
         }
-        if (lower.contains("otp") || lower.contains("verification required") || lower.contains("403")) {
-            keepPendingBookingQueued("Booking saved. We will retry automatically after account verification is ready.");
-            if ("bookings".equals(currentScreen)) {
-                showBookingsList();
+        if (lower.contains("service_area_unavailable")) {
+            Service affected = pendingBookingService == null ? selectedService : pendingBookingService;
+            discardBlockedServiceBooking();
+            bookingAreaUnavailable = true;
+            if (affected != null) {
+                showBookingConfirm(affected);
+                mainScroll.post(() -> mainScroll.smoothScrollTo(0, 0));
+            } else {
+                showHome();
             }
             return;
         }
+        if (lower.contains("service_area_location_required")) {
+            discardBlockedServiceBooking();
+            SafeToast.makeText(this, "We couldn't verify this service location. Select the location again.", Toast.LENGTH_LONG).show();
+            return;
+        }
+        if (lower.contains("service_not_available") || lower.contains("service_not_bookable")) {
+            Service affected = pendingBookingService == null ? selectedService : pendingBookingService;
+            discardBlockedServiceBooking();
+            if (affected != null) showServicePreparing(affected);
+            else showHome();
+            return;
+        }
+        if (lower.contains("booking_prelaunch")) {
+            keepPendingBookingQueued("Bookings are not open yet. Your request was not submitted.");
+            return;
+        }
+        if (lower.contains("session expired") || lower.contains("login again")
+                || lower.contains("auth_session_missing") || lower.contains("401")) {
+            bookingSubmissionInFlight = false;
+            getSharedPreferences(PREFS, MODE_PRIVATE).edit().putBoolean("logged_in", false).apply();
+            loggedIn = false;
+            if (firebaseAuth != null) firebaseAuth.signOut();
+            SafeToast.makeText(this, "Please verify your mobile number again. Your booking details are saved and will retry after login.", Toast.LENGTH_LONG).show();
+            showLogin();
+            return;
+        }
         if (lower.contains("invalid") || lower.contains("required")) {
-            keepPendingBookingQueued("Booking saved locally. We will retry sync automatically when the backend accepts it.");
+            keepPendingBookingQueued("Booking was not accepted by the server. Review the details and retry the same request.");
             if ("bookings".equals(currentScreen)) {
                 showBookingsList();
             }
@@ -16566,7 +19255,7 @@ public class MainActivity extends Activity {
             verifyPendingBookingBeforeRetry(cleanMessage);
             return;
         }
-        keepPendingBookingQueued("Booking saved. We will retry automatically when the server is ready.");
+        keepPendingBookingQueued("Booking is not confirmed yet. Please retry the same request.");
     }
 
     private void verifyPendingBookingBeforeRetry(String reason) {
@@ -16576,7 +19265,7 @@ public class MainActivity extends Activity {
         }
         final Booking bookingToVerify = pendingBooking;
         final Service serviceToVerify = pendingBookingService;
-        Toast.makeText(this, "Checking booking status...", Toast.LENGTH_SHORT).show();
+        SafeToast.makeText(this, "Checking booking status...", Toast.LENGTH_SHORT).show();
         backendClient.getBooking(bookingToVerify.getId(), new BackendClient.JsonCallback() {
             @Override
             public void onSuccess(JSONObject object) {
@@ -16597,7 +19286,7 @@ public class MainActivity extends Activity {
                     carouselHandler.postDelayed(pendingBookingRetryRunnable, BOOKING_RETRY_DELAY_MS);
                     return;
                 }
-                keepPendingBookingQueued("Booking saved locally. Please tap Retry when your connection is stable.");
+                keepPendingBookingQueued("Booking is not confirmed. Tap Retry when your connection is stable.");
             }
         });
     }
@@ -16609,7 +19298,7 @@ public class MainActivity extends Activity {
             return;
         }
         pendingBookingAttempts = 0;
-        keepPendingBookingQueued("Booking saved. We will retry automatically when the network is stable.");
+        keepPendingBookingQueued("Booking is not confirmed. Tap Retry when the network is stable.");
     }
 
     private boolean needsCustomerDetails() {
@@ -16657,7 +19346,7 @@ public class MainActivity extends Activity {
             String cleanPhone = normalizeCustomerPhoneInput(phoneInput.getText().toString());
             String name = nameInput.getText().toString().trim();
             if (!isValidCustomerMobile(cleanPhone)) {
-                Toast.makeText(this, "Please enter a valid 10-digit mobile number.", Toast.LENGTH_SHORT).show();
+                SafeToast.makeText(this, "Please enter a valid 10-digit mobile number.", Toast.LENGTH_SHORT).show();
                 return;
             }
             if (TextUtils.isEmpty(name)) {
@@ -16685,20 +19374,21 @@ public class MainActivity extends Activity {
             return;
         }
         showAssignmentFooter(false);
-        addTopBar(partnerAssigned ? "Partner Assigned" : "Assigning Partner", "", view -> showHome());
+        AppControlConfig.AssignmentUi copy = appControl.assignmentUi;
+        addTopBar(partnerAssigned ? copy.assignedTopTitle : copy.waitingTopTitle, "", view -> showHome());
 
         Service service = latestBookingService();
         LinearLayout card = bookingPanel(20);
         card.setGravity(Gravity.CENTER_HORIZONTAL);
         card.addView(bookingConfirmedBadge(), new LinearLayout.LayoutParams(dp(104), dp(104)));
 
-        TextView status = text(partnerAssigned ? "Service partner assigned" : "Booking confirmed", 22, BLACK, true);
+        TextView status = text(partnerAssigned ? copy.assignedTitle : copy.waitingTitle, 22, BLACK, true);
         status.setGravity(Gravity.CENTER);
         card.addView(status, margin(-1, -2, 0, 16, 0, 6));
 
         TextView body = text(partnerAssigned
-                ? assignedPartnerName + " is assigned for your booking. You can now track live status."
-                : "Your booking is confirmed. We are assigning the best nearby service partner now.",
+                ? assignmentCopy(copy.assignedMessage, service)
+                : assignmentCopy(copy.waitingMessage, service),
                 13, MUTED, false);
         body.setGravity(Gravity.CENTER);
         card.addView(body, margin(-1, -2, 8, 0, 8, 18));
@@ -16713,27 +19403,37 @@ public class MainActivity extends Activity {
         card.addView(progress, margin(-1, 44, 8, 0, 8, 14));
 
         LinearLayout detail = bookingPanel(14);
-        detail.addView(text(partnerAssigned ? assignedPartnerName : "Assignment in progress", 16, BLACK, true));
-        detail.addView(text(partnerAssigned ? service.getName() + " expert  |  Rating 4.8" : "Checking availability of verified nearby experts.", 12, MUTED, false), margin(-1, -2, 0, 4, 0, 0));
+        detail.addView(text(partnerAssigned ? assignedPartnerName : copy.waitingDetailTitle, 16, BLACK, true));
+        String assignedDetail = service.getName() + " expert";
+        if (assignedPartnerRating > 0d) assignedDetail += "  |  Rating " + String.format(Locale.US, "%.1f", assignedPartnerRating);
+        detail.addView(text(partnerAssigned ? assignedDetail : assignmentCopy(copy.waitingDetailMessage, service), 12, MUTED, false), margin(-1, -2, 0, 4, 0, 0));
         card.addView(detail, margin(-1, -2, 0, 0, 0, 16));
 
-        View action = glassContinueButton(partnerAssigned ? "Go to Track Booking   \u2192" : "Keep Waiting   \u2192",
+        View action = glassContinueButton((partnerAssigned ? copy.assignedActionText : copy.waitingActionText) + "   \u2192",
                 view -> {
                     if (partnerAssigned) {
                         showTrack();
                     } else {
-                        Toast.makeText(this, "Still assigning your service partner", Toast.LENGTH_SHORT).show();
+                        SafeToast.makeText(this, copy.waitingDetailTitle, Toast.LENGTH_SHORT).show();
                     }
                 });
         card.addView(action, margin(-1, 54, 0, 0, 0, 10));
 
-        TextView leave = text("Leave page", 14, ORANGE, true);
+        TextView leave = text(copy.leaveText, 14, ORANGE, true);
         leave.setGravity(Gravity.CENTER);
         leave.setOnClickListener(view -> showHome());
         card.addView(leave, margin(-1, 42, 0, 0, 0, 0));
 
         animateIn(card, 80);
         screenContent.addView(card, margin(-1, -2, 18, 22, 18, 24));
+    }
+
+    private String assignmentCopy(String template, Service service) {
+        String serviceName = service == null ? "service" : service.getName();
+        String partnerName = TextUtils.isEmpty(assignedPartnerName) ? "Your service expert" : assignedPartnerName;
+        return (template == null ? "" : template)
+                .replace("{partner}", partnerName)
+                .replace("{service}", serviceName);
     }
 
     private TextView waitDot(String value, boolean active) {
@@ -16767,7 +19467,7 @@ public class MainActivity extends Activity {
         ball.setGravity(Gravity.CENTER);
         ball.setIncludeFontPadding(false);
         ball.setBackground(successBallDrawable());
-        ball.setElevation(dp(10));
+        ball.setElevation(0f);
         FrameLayout.LayoutParams ballParams = new FrameLayout.LayoutParams(dp(78), dp(78), Gravity.CENTER);
         badge.addView(ball, ballParams);
 
@@ -16832,6 +19532,7 @@ public class MainActivity extends Activity {
         JSONObject payload = new JSONObject();
         try {
             String phone = details.getPhone();
+            payload.put("bookingId", booking.getId());
             payload.put("bookingCode", booking.getId());
             payload.put("clientRequestId", booking.getId());
             payload.put("serviceCategory", service.getId());
@@ -16842,7 +19543,10 @@ public class MainActivity extends Activity {
             payload.put("lat", serviceLat);
             payload.put("lng", serviceLng);
             payload.put("price", service.getPrice());
-            payload.put("slot", details.getSlot());
+            // The partner chooses the arrival ETA after accepting; customer-selected
+            // date/time must never be treated as a committed partner time slot.
+            payload.put("slot", "");
+            payload.put("schedulePending", true);
             payload.put("userName", details.getName());
             payload.put("userPhone", phone);
             payload.put("customerPhone", phone);
@@ -16854,6 +19558,11 @@ public class MainActivity extends Activity {
             payload.put("room", fieldValue(roomInput));
             payload.put("landmark", fieldValue(landmarkInput));
             payload.put("phoneVerified", isCustomerPhoneVerifiedByFirebase());
+            payload.put("formAnswers", remoteBookingAnswers());
+            if ("cleaning".equals(service.getId()) && !TextUtils.isEmpty(selectedCleaningPricingOptionId)) {
+                payload.put("pricingOptionId", selectedCleaningPricingOptionId);
+            }
+            payload.put("formConfigVersion", appControl == null ? "" : appControl.version);
         } catch (Exception ignored) {
         }
         return payload;
@@ -16941,8 +19650,9 @@ public class MainActivity extends Activity {
         payload.put("locationLat", serviceLat);
         payload.put("locationLng", serviceLng);
         payload.put("hasExactLocation", hasServiceLocation);
-        payload.put("slot", details.getSlot());
-        payload.put("time", details.getSlot());
+        payload.put("slot", "");
+        payload.put("time", "");
+        payload.put("schedulePending", true);
         payload.put("defaultAmount", service.getPrice());
         payload.put("price", service.getPrice());
         payload.put("status", "pending");
@@ -17062,7 +19772,6 @@ public class MainActivity extends Activity {
             clearSensitiveLocalSession();
             loggedIn = false;
             bookingPopupUnlocked = false;
-            if (googleSignInClient != null) googleSignInClient.signOut();
             if (firebaseAuth != null) firebaseAuth.signOut();
             showLogin();
         };
@@ -17093,6 +19802,10 @@ public class MainActivity extends Activity {
         removeSecureString(KEY_SAVED_ADDRESSES);
         removeSecureString(KEY_SAVED_ADDRESS_OWNER_PHONE);
         removeSecureString(KEY_DEFAULT_SAVED_ADDRESS);
+        removeSecureString(KEY_DETECTED_HOME_ADDRESS);
+        removeSecureString(KEY_DETECTED_HOME_CITY);
+        removeSecureString(KEY_DETECTED_HOME_LAT);
+        removeSecureString(KEY_DETECTED_HOME_LNG);
         clearLocalBookingSession();
     }
 
@@ -17110,6 +19823,7 @@ public class MainActivity extends Activity {
         bookingStatusCache.clear();
         bookingPartnerNameCache.clear();
         bookingPartnerPhoneCache.clear();
+        bookingServiceContactRoleCache.clear();
         bookingPartnerPhotoCache.clear();
     }
 
@@ -17120,8 +19834,14 @@ public class MainActivity extends Activity {
         String currentPhone = normalizeCustomerPhoneInput(secureString(KEY_CUSTOMER_PHONE, ""));
         String bookingOwnerPhone = normalizeCustomerPhoneInput(secureString(KEY_BOOKING_OWNER_PHONE, ""));
         boolean hasCachedBookings = !bookingStore.load().isEmpty();
-        if (hasCachedBookings && (!isValidCustomerMobile(currentPhone)
-                || !currentPhone.equals(bookingOwnerPhone))) {
+        // During cold start Firebase/profile hydration can briefly leave the
+        // current phone empty. That is not evidence of an account switch and
+        // must not delete valid history. Clear only after both identities are
+        // verified and demonstrably different.
+        if (hasCachedBookings
+                && isValidCustomerMobile(currentPhone)
+                && isValidCustomerMobile(bookingOwnerPhone)
+                && !currentPhone.equals(bookingOwnerPhone)) {
             clearLocalBookingSession();
             return;
         }
@@ -17209,6 +19929,32 @@ public class MainActivity extends Activity {
             putSecureString(KEY_CUSTOMER_PHONE, profilePhone);
             if (!isValidCustomerMobile(bookingPrimaryPhone)) bookingPrimaryPhone = profilePhone;
         }
+        String profileAddress = user == null ? "" : user.optString("address", "").trim();
+        String profileCity = user == null ? "" : user.optString("city", "").trim();
+        if (!TextUtils.isEmpty(profileAddress)) putSecureString(KEY_DETECTED_HOME_ADDRESS, profileAddress);
+        if (!TextUtils.isEmpty(profileCity) && (!TextUtils.isEmpty(profileAddress)
+                || !TextUtils.isEmpty(secureString(KEY_DETECTED_HOME_ADDRESS, "")))) {
+            putSecureString(KEY_DETECTED_HOME_CITY, profileCity);
+        }
+        JSONObject profileLocation = user == null ? null : user.optJSONObject("location");
+        JSONArray coordinates = profileLocation == null ? null : profileLocation.optJSONArray("coordinates");
+        if (coordinates != null && coordinates.length() >= 2) {
+            double longitude = coordinates.optDouble(0, 0d);
+            double latitude = coordinates.optDouble(1, 0d);
+            if (Math.abs(latitude) <= 90d && Math.abs(longitude) <= 180d
+                    && !(latitude == 0d && longitude == 0d)) {
+                serviceLat = latitude;
+                serviceLng = longitude;
+                hasServiceLocation = true;
+                if (!TextUtils.isEmpty(profileAddress)) {
+                    putSecureString(KEY_DETECTED_HOME_LAT, String.valueOf(latitude));
+                    putSecureString(KEY_DETECTED_HOME_LNG, String.valueOf(longitude));
+                }
+            }
+        }
+        if ("home".equals(currentScreen)) {
+            refreshHomeLocationLabels();
+        }
     }
 
     private void syncCustomerProfileToBackend() {
@@ -17220,23 +19966,37 @@ public class MainActivity extends Activity {
             return;
         }
         if (customerProfileSyncInFlight) {
+            customerProfileSyncPending = true;
             return;
         }
         customerProfileSyncInFlight = true;
         String phone = savedCustomerPhoneForBackend();
+        String selectedAddress = secureString(KEY_DEFAULT_SAVED_ADDRESS, "").trim();
+        String detectedAddress = secureString(KEY_DETECTED_HOME_ADDRESS, "").trim();
+        String profileAddress = !headerPrefersDetectedLocation && !TextUtils.isEmpty(selectedAddress)
+                ? selectedAddress : detectedAddress;
+        String profileCity = !headerPrefersDetectedLocation && !TextUtils.isEmpty(selectedAddress)
+                ? cityFromAddressText(selectedAddress) : secureString(KEY_DETECTED_HOME_CITY, "");
+        boolean coordinatesMatchAddress = hasServiceLocation && !TextUtils.isEmpty(detectedAddress)
+                && detectedAddress.equals(profileAddress);
         backendClient.upsertUserProfile(
                 customerName(),
                 phone,
                 customerEmail(),
-                "",
-                serviceLat,
-                serviceLng,
+                profileAddress,
+                profileCity,
+                coordinatesMatchAddress ? serviceLat : 0d,
+                coordinatesMatchAddress ? serviceLng : 0d,
                 fcmToken(),
                 new BackendClient.JsonCallback() {
                     @Override
                     public void onSuccess(JSONObject object) {
                         customerProfileSyncInFlight = false;
                         rememberUserPublicId(object);
+                        if (customerProfileSyncPending) {
+                            customerProfileSyncPending = false;
+                            syncCustomerProfileToBackend();
+                        }
                         // Profile identity must be linked before querying history.
                         bookingHistoryRefreshInFlight = false;
                         lastBookingHistoryRefreshAt = 0L;
@@ -17247,6 +20007,10 @@ public class MainActivity extends Activity {
                     @Override
                     public void onError(String message) {
                         customerProfileSyncInFlight = false;
+                        if (customerProfileSyncPending) {
+                            customerProfileSyncPending = false;
+                            syncCustomerProfileToBackend();
+                        }
                         bookingHistoryRefreshInFlight = false;
                     }
                 }
@@ -17260,7 +20024,8 @@ public class MainActivity extends Activity {
         List<Booking> cached = bookingStore.load();
         syncBookingListStatuses(cached);
         for (Booking booking : cached) {
-            if (booking != null && !TextUtils.isEmpty(booking.getId()) && !isBookingClosed(booking)) {
+            if (booking != null && !TextUtils.isEmpty(booking.getId())
+                    && !isClientBookingRequestId(booking.getId()) && !isBookingClosed(booking)) {
                 fetchCachedBookingFromBackend(booking.getId());
             }
         }
@@ -17270,21 +20035,8 @@ public class MainActivity extends Activity {
         if (firebaseAuth.getCurrentUser() != null || firebaseAuthInProgress) {
             return;
         }
-        firebaseAuthInProgress = true;
-        firebaseAuth.signInAnonymously()
-                .addOnSuccessListener(result -> {
-                    firebaseAuthInProgress = false;
-                    firebaseAuthWarningShown = false;
-                    if (loggedIn) {
-                        recoverCustomerIdentityFromFirebase();
-                        refreshFcmToken();
-                        syncCustomerProfileToBackend();
-                    }
-                })
-                .addOnFailureListener(error -> {
-                    firebaseAuthInProgress = false;
-                    showFirebaseAuthWarning(error);
-                });
+        firebaseAuthInProgress = false;
+        showFirebaseAuthWarning(new IllegalStateException("Authenticated Firebase session missing"));
     }
 
     private void ensureFirebaseReady(Runnable action) {
@@ -17296,18 +20048,8 @@ public class MainActivity extends Activity {
             carouselHandler.postDelayed(() -> ensureFirebaseReady(action), 450);
             return;
         }
-        firebaseAuthInProgress = true;
-        firebaseAuth.signInAnonymously()
-                .addOnSuccessListener(result -> {
-                    firebaseAuthInProgress = false;
-                    firebaseAuthWarningShown = false;
-                    action.run();
-                })
-                .addOnFailureListener(error -> {
-                    firebaseAuthInProgress = false;
-                    showFirebaseAuthWarning(error);
-                    carouselHandler.postDelayed(() -> ensureFirebaseReady(action), 1800);
-                });
+        firebaseAuthInProgress = false;
+        showFirebaseAuthWarning(new IllegalStateException("Authenticated Firebase session missing"));
     }
 
     private void showFirebaseAuthWarning(Exception error) {
@@ -17433,20 +20175,27 @@ public class MainActivity extends Activity {
         }
         Intent intent = new Intent(this, MainActivity.class);
         intent.setAction("apnaservo.booking.assigned");
+        String bookingId = !TextUtils.isEmpty(latestBackendBookingId)
+                ? latestBackendBookingId
+                : (latestBooking == null ? "" : latestBooking.getId());
+        intent.putExtra(KEY_PUSH_BOOKING_ID, bookingId);
+        intent.putExtra(KEY_PUSH_BOOKING_STATUS, remoteBookingStatus);
+        intent.putExtra(KEY_PUSH_ACTION_TYPE, "OPEN_BOOKING");
+        intent.putExtra(KEY_PUSH_ACTION_ID, bookingId);
         int flags = PendingIntent.FLAG_UPDATE_CURRENT;
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
             flags |= PendingIntent.FLAG_IMMUTABLE;
         }
-        PendingIntent pendingIntent = PendingIntent.getActivity(this, 4107, intent, flags);
+        int requestCode = TextUtils.isEmpty(bookingId) ? 4107 : Math.abs(bookingId.hashCode());
+        PendingIntent pendingIntent = PendingIntent.getActivity(this, requestCode, intent, flags);
         String partnerName = TextUtils.isEmpty(assignedPartnerName) ? "Your service partner" : assignedPartnerName;
-        String serviceName = latestBookingService().getName();
-        String body = partnerName + " has been assigned for your " + serviceName + " booking."
-                + (TextUtils.isEmpty(remotePartnerArrivalLabel) ? "" : " Expected arrival: " + partnerArrivalDisplay() + ".");
+        String arrival = TextUtils.isEmpty(remotePartnerArrivalLabel) ? "soon" : partnerArrivalDisplay();
+        String body = partnerName + " is arriving in " + arrival + ". Tap to track your booking.";
         Notification.Builder builder = Build.VERSION.SDK_INT >= Build.VERSION_CODES.O
                 ? new Notification.Builder(this, CHANNEL_BOOKING_REQUESTS)
                 : new Notification.Builder(this);
         builder.setSmallIcon(R.drawable.ic_nav_bookings)
-                .setContentTitle("Partner assigned")
+                .setContentTitle("Partner arriving in " + arrival)
                 .setContentText(body)
                 .setStyle(new Notification.BigTextStyle().bigText(body))
                 .setContentIntent(pendingIntent)
@@ -17455,10 +20204,11 @@ public class MainActivity extends Activity {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) {
             builder.setPriority(Notification.PRIORITY_HIGH);
         }
-        manager.notify((int) (System.currentTimeMillis() % Integer.MAX_VALUE), builder.build());
+        manager.notify(requestCode, builder.build());
     }
 
     private void startPartnerAssignmentSync() {
+        final int generation = ++bookingSyncGeneration;
         if (bookingStatusRunnable != null) {
             carouselHandler.removeCallbacks(bookingStatusRunnable);
         }
@@ -17470,12 +20220,15 @@ public class MainActivity extends Activity {
             realtimeBookingListener = null;
         }
         startBackendSocket();
-        listenToBookingStatus();
+        listenToBookingStatus(generation);
+        bookingBreadcrumb("BOOKING_LISTENER_REGISTERED", bookingFlowStatus(), "generation_" + generation);
         fetchBookingAssignmentStatus();
         scheduleBookingStatusPoll();
     }
 
     private void pausePartnerAssignmentSync() {
+        bookingBreadcrumb("BOOKING_LISTENER_REMOVED", bookingFlowStatus(), "screen_or_lifecycle_stop");
+        bookingSyncGeneration++;
         if (bookingStatusRunnable != null) {
             carouselHandler.removeCallbacks(bookingStatusRunnable);
             bookingStatusRunnable = null;
@@ -17666,11 +20419,13 @@ public class MainActivity extends Activity {
                 showDetail(selectedService);
                 break;
             case "OPEN_BOOKING":
+                openBookingDestination(actionId, false, false);
+                break;
             case "OPEN_PAYMENT":
-                openBookingDestination(actionId, false);
+                openBookingDestination(actionId, false, true);
                 break;
             case "OPEN_BOOKING_CHAT":
-                openBookingDestination(actionId, true);
+                openBookingDestination(actionId, true, false);
                 break;
             case "OPEN_BOOKING_HISTORY":
                 showBookingsList();
@@ -17689,7 +20444,7 @@ public class MainActivity extends Activity {
         }
     }
 
-    private void openBookingDestination(String bookingId, boolean openChat) {
+    private void openBookingDestination(String bookingId, boolean openChat, boolean openPayment) {
         if (TextUtils.isEmpty(bookingId)) {
             showBookingsList();
             return;
@@ -17707,6 +20462,7 @@ public class MainActivity extends Activity {
                     latestBackendBookingId = remote.optString("_id", remote.optString("bookingId", bookingId));
                     selectedTrackBookingId = code;
                     latestBooking = booking;
+                    remoteServiceWorkDetails = remote.optJSONObject("serviceWorkDetails");
                     remoteBookingStatus = normalizeRemoteStatus(remote.optString("status", "pending"));
                     bookingStatusCache.put(code, remoteBookingStatus);
                     rememberRemoteBookingMetadata(booking, remote);
@@ -17727,6 +20483,10 @@ public class MainActivity extends Activity {
                     saveLatestBackendBookingId();
                     if (openChat) {
                         showBookingChat(booking);
+                    } else if (openPayment && "amount_pending".equals(remoteBookingStatus)) {
+                        // The tracking screen owns the production payment-review
+                        // UI and renders the pending quote immediately.
+                        showTrack();
                     } else {
                         showTrack();
                     }
@@ -17818,17 +20578,18 @@ public class MainActivity extends Activity {
             return;
         }
         boolean mapLocationChanged = updateMapLocationsFromBookingJson(booking);
+        rememberLaundryAssignment(booking);
         persistRemoteBookingSnapshot(booking);
         String remoteId = booking.optString("_id", booking.optString("bookingId", ""));
         String bookingCode = booking.optString("publicId", booking.optString("bookingCode", booking.optString("bookingId", "")));
-        String partnerName = booking.optString("partnerName", "");
+        String partnerName = booking.optString("serviceContactName", booking.optString("partnerName", ""));
         if (TextUtils.isEmpty(partnerName)) {
             JSONObject partner = booking.optJSONObject("partnerSnapshot");
             partnerName = partner == null ? "" : partner.optString("name", "");
         }
         if (!TextUtils.isEmpty(bookingCode)) {
             if (!TextUtils.isEmpty(remoteId)) backendIdByBookingCode.put(bookingCode, remoteId);
-            String partnerPhone = booking.optString("partnerPhone", "");
+            String partnerPhone = booking.optString("serviceContactPhone", booking.optString("partnerPhone", ""));
             if (TextUtils.isEmpty(partnerPhone)) {
                 JSONObject partner = booking.optJSONObject("partnerSnapshot");
                 partnerPhone = partner == null ? "" : partner.optString("phone", "");
@@ -17836,6 +20597,7 @@ public class MainActivity extends Activity {
             if (!TextUtils.isEmpty(partnerPhone)) {
                 bookingPartnerPhoneCache.put(bookingCode, partnerPhone);
             }
+            bookingServiceContactRoleCache.put(bookingCode, booking.optString("serviceContactRole", "partner_owner"));
             rememberPartnerPhoto(bookingCode, booking);
             rememberPartnerRating(bookingCode, booking);
         }
@@ -17867,6 +20629,15 @@ public class MainActivity extends Activity {
             latestBackendBookingId = remoteId;
             saveLatestBackendBookingId();
         }
+        boolean etaChanged = updatePartnerArrivalEstimate(
+                booking.optString("partnerArrivalEstimateLabel", ""),
+                booking.optLong("expectedArrivalAtMillis", 0L)
+        );
+        String previousWorkDetails = remoteServiceWorkDetails == null ? "" : remoteServiceWorkDetails.toString();
+        remoteServiceWorkDetails = booking.optJSONObject("serviceWorkDetails");
+        boolean workDetailsChanged = !previousWorkDetails.equals(
+                remoteServiceWorkDetails == null ? "" : remoteServiceWorkDetails.toString()
+        );
         updateAssignmentFromServer(
                 booking.optString("status", "pending"),
                 partnerName,
@@ -17876,11 +20647,10 @@ public class MainActivity extends Activity {
                 booking.optInt("quoteCounterAmount", 0),
                 booking.optString("quoteCounterMessage", "")
         );
-        boolean etaChanged = updatePartnerArrivalEstimate(
-                booking.optString("partnerArrivalEstimateLabel", ""),
-                booking.optLong("expectedArrivalAtMillis", 0L)
-        );
         refreshArrivalEstimateUi(etaChanged);
+        if (workDetailsChanged && ("track".equals(currentScreen) || "booking_confirmed".equals(currentScreen))) {
+            carouselHandler.post(this::showTrack);
+        }
         if (mapLocationChanged && "track".equals(currentScreen) && "on_the_way".equals(normalizeRemoteStatus(remoteBookingStatus))) {
             carouselHandler.post(this::showTrack);
         }
@@ -17902,15 +20672,60 @@ public class MainActivity extends Activity {
             }
             String current = bookingStatusCache.get(code);
             if (!shouldAcceptBookingStatusTransition(current, updated.getStatus())) return;
-            bookingStore.save(updated);
+            enqueueRemoteBookingPersistence(updated);
             if (latestBooking != null && latestBooking.getId().equals(code)) {
                 latestBooking = updated;
             }
-        } catch (Exception ignored) {
+        } catch (Exception error) {
+            FirebaseCrashlytics.getInstance().recordException(error);
         }
     }
 
-    private void listenToBookingStatus() {
+    /** Coalesces high-frequency remote snapshots and performs crypto/JSON/disk work off the UI thread. */
+    private void enqueueRemoteBookingPersistence(Booking snapshot) {
+        if (snapshot == null || TextUtils.isEmpty(snapshot.getId()) || activityDestroyed) {
+            return;
+        }
+        synchronized (bookingPersistenceLock) {
+            pendingBookingPersistence.put(snapshot.getId(), snapshot);
+            if (bookingPersistenceDrainScheduled) {
+                return;
+            }
+            bookingPersistenceDrainScheduled = true;
+        }
+        try {
+            bookingPersistenceExecutor.execute(this::drainRemoteBookingPersistence);
+        } catch (RejectedExecutionException rejected) {
+            synchronized (bookingPersistenceLock) {
+                bookingPersistenceDrainScheduled = false;
+            }
+            FirebaseCrashlytics.getInstance().recordException(rejected);
+        }
+    }
+
+    private void drainRemoteBookingPersistence() {
+        while (true) {
+            List<Booking> batch;
+            synchronized (bookingPersistenceLock) {
+                if (pendingBookingPersistence.isEmpty()) {
+                    bookingPersistenceDrainScheduled = false;
+                    return;
+                }
+                batch = new ArrayList<>(pendingBookingPersistence.values());
+                pendingBookingPersistence.clear();
+            }
+            try {
+                BookingStore store = bookingStore;
+                if (store != null) {
+                    store.saveAll(batch);
+                }
+            } catch (RuntimeException error) {
+                FirebaseCrashlytics.getInstance().recordException(error);
+            }
+        }
+    }
+
+    private void listenToBookingStatus(int generation) {
         if (latestBooking == null || firestore == null) {
             return;
         }
@@ -17920,15 +20735,23 @@ public class MainActivity extends Activity {
             bookingListener.remove();
             bookingListener = null;
         }
-        ensureFirebaseReady(() -> bookingListener = firestore.collection("bookings")
+        ensureFirebaseReady(() -> {
+            if (generation != bookingSyncGeneration
+                    || latestBooking == null
+                    || !expectedBookingId.equals(latestBooking.getId())) return;
+            bookingListener = firestore.collection("bookings")
                 .document(expectedBookingId)
                 .addSnapshotListener((snapshot, error) -> {
                     if (error != null || snapshot == null || !snapshot.exists()) {
-                        carouselHandler.postDelayed(this::listenToBookingStatus, BOOKING_STATUS_REFRESH_MS);
+                        // Firestore already retries transient listener failures.
+                        // Manually attaching another listener here leaked parallel
+                        // callbacks after every error. Socket, RTDB and bounded REST
+                        // polling remain active as independent fallbacks.
                         return;
                     }
                     applyBookingSnapshot(expectedBookingId, snapshot);
-                }));
+                });
+        });
     }
 
     private void listenToRealtimeBookingStatus() {
@@ -17963,12 +20786,12 @@ public class MainActivity extends Activity {
         applyBookingListStatus(bookingId, status, partnerName, finalAmount);
         if (isCancellationInFlight(bookingId) && !"cancelled".equals(normalizeRemoteStatus(status))) return;
         if (!bookingId.equals(currentBookingId())) return;
-        updateAssignmentFromServer(status, partnerName, finalAmount);
         Long expectedArrival = snapshot.getLong("expectedArrivalAtMillis");
         boolean etaChanged = updatePartnerArrivalEstimate(
                 snapshot.getString("partnerArrivalEstimateLabel"),
                 expectedArrival == null ? 0L : expectedArrival
         );
+        updateAssignmentFromServer(status, partnerName, finalAmount);
         refreshArrivalEstimateUi(etaChanged);
     }
 
@@ -17979,11 +20802,11 @@ public class MainActivity extends Activity {
         applyBookingListStatus(bookingId, status, partnerName, finalAmount);
         if (isCancellationInFlight(bookingId) && !"cancelled".equals(normalizeRemoteStatus(status))) return;
         if (!bookingId.equals(currentBookingId())) return;
-        updateAssignmentFromServer(status, partnerName, finalAmount);
         boolean etaChanged = updatePartnerArrivalEstimate(
                 realtimeString(snapshot, "partnerArrivalEstimateLabel", ""),
                 realtimeLong(snapshot, "expectedArrivalAtMillis", 0L)
         );
+        updateAssignmentFromServer(status, partnerName, finalAmount);
         refreshArrivalEstimateUi(etaChanged);
     }
 
@@ -18224,7 +21047,7 @@ public class MainActivity extends Activity {
             carouselHandler.removeCallbacks(bookingStatusRunnable);
         }
         if (!wasAssigned) {
-            Toast.makeText(this, "Partner accepted your booking", Toast.LENGTH_SHORT).show();
+            SafeToast.makeText(this, "Partner accepted your booking", Toast.LENGTH_SHORT).show();
             showPartnerAssignedNotification();
         }
         if ("booking_confirmed".equals(currentScreen)) {
@@ -18264,8 +21087,11 @@ public class MainActivity extends Activity {
                 || value.startsWith("canceled_")) {
             return "cancelled";
         }
-        if ("declined".equals(value) || "expired".equals(value)) {
+        if ("declined".equals(value)) {
             return "rejected";
+        }
+        if ("request_expired".equals(value) || "partner_request_expired".equals(value)) {
+            return "request_expired";
         }
         if ("payment_verified".equals(value)
                 || "paid".equals(value)
@@ -18295,11 +21121,13 @@ public class MainActivity extends Activity {
                 || "queued".equals(value)) {
             return "pending";
         }
+        if ("confirmed".equals(value)) {
+            return "pending";
+        }
         if ("booked".equals(value)
                 || "assigned".equals(value)
                 || "partner_assigned".equals(value)
-                || "technician_assigned".equals(value)
-                || "confirmed".equals(value)) {
+                || "technician_assigned".equals(value)) {
             return "accepted";
         }
         if ("ontheway".equals(value) || "on_way".equals(value)) {
@@ -18337,7 +21165,8 @@ public class MainActivity extends Activity {
                 || "disputed".equals(value)
                 || "customer_no_response".equals(value)
                 || "cancelled".equals(value)
-                || "rejected".equals(value);
+                || "rejected".equals(value)
+                || "expired".equals(value);
     }
 
     private String otpUserError(String message) {
@@ -18416,6 +21245,12 @@ public class MainActivity extends Activity {
             return;
         }
         if (isClosedBookingStatus(remoteBookingStatus)) {
+            floatingFooter.setVisibility(View.GONE);
+            return;
+        }
+        if (isStaleHomeBookingFooter(latestBooking)) {
+            awaitingPartnerAssignment = false;
+            bookingPopupUnlocked = false;
             floatingFooter.setVisibility(View.GONE);
             return;
         }
@@ -18532,6 +21367,7 @@ public class MainActivity extends Activity {
     private boolean shouldShowBookingPopup() {
         return latestBooking != null
                 && !isBookingClosed(latestBooking)
+                && !isStaleHomeBookingFooter(latestBooking)
                 && (bookingPopupUnlocked || awaitingPartnerAssignment || partnerAssigned);
     }
 
@@ -18809,7 +21645,7 @@ public class MainActivity extends Activity {
         banner.setElevation(0);
 
         ImageView slideBackground = new ImageView(this);
-        slideBackground.setImageResource(R.drawable.hero_ro_background);
+        loadBoundedDrawableResource(slideBackground, R.drawable.hero_ro_background, 720, 405);
         slideBackground.setScaleType(ImageView.ScaleType.CENTER_CROP);
         banner.addView(slideBackground, new FrameLayout.LayoutParams(-1, -1));
 
@@ -18825,22 +21661,22 @@ public class MainActivity extends Activity {
         bottomDepth.setBackground(heroBottomDepthDrawable());
         banner.addView(bottomDepth, new FrameLayout.LayoutParams(-1, dp(58), Gravity.BOTTOM));
 
+        homeWeatherOverlay = homeWeatherEffectView();
+        banner.addView(homeWeatherOverlay, new FrameLayout.LayoutParams(-1, -1));
+        requestHomeHeaderWeather();
+
         LinearLayout content = vertical();
         content.setPadding(dp(14), dp(14), dp(14), dp(8));
         banner.addView(content, new FrameLayout.LayoutParams(-1, -1));
 
-        LinearLayout top = horizontal();
-        top.setGravity(Gravity.CENTER_VERTICAL);
-        top.addView(jaapiHeaderImage(-8f), new LinearLayout.LayoutParams(dp(42), dp(42)));
-        LinearLayout brand = vertical();
-        brand.setGravity(Gravity.CENTER);
-        brand.addView(brandImageWordmark(164, 52), margin(164, 52, 0, 0, 0, 0));
-        TextView subtitle = text(TextUtils.isEmpty(appControl.uiHomeSubtitle) ? "Home services at your doorstep" : appControl.uiHomeSubtitle, 11, Color.rgb(54, 50, 49), false);
-        subtitle.setGravity(Gravity.CENTER);
-        brand.addView(subtitle);
-        top.addView(brand, new LinearLayout.LayoutParams(0, -2, 1));
-        top.addView(jaapiHeaderImage(8f), new LinearLayout.LayoutParams(dp(42), dp(42)));
+        boolean servicesClosed = !appControl.operatingHours.isOpenNow();
+        LinearLayout top = homeLocationHeader(servicesClosed);
         content.addView(top);
+
+        homeRainDelayNotice = premiumRainDelayNotice();
+        homeRainDelayNotice.setAccessibilityLiveRegion(View.ACCESSIBILITY_LIVE_REGION_POLITE);
+        homeRainDelayNotice.setVisibility(View.GONE);
+        screenContent.addView(homeRainDelayNotice, margin(-1, -2, dp(14), dp(8), dp(14), dp(4)));
 
         content.addView(darkSearchBar(), margin(-1, 48, 0, 8, 0, 10));
 
@@ -18880,6 +21716,1306 @@ public class MainActivity extends Activity {
         heroParams.height = homeHeroHeightPx();
         heroParams.setMargins(0, 0, 0, dp(8));
         screenContent.addView(banner, heroParams);
+        updateHomeRainNotice();
+        scheduleHomeHoursRefresh(servicesClosed);
+    }
+
+    private void updateHomeRainNotice() {
+        if (activityDestroyed || homeRainDelayNotice == null) return;
+        boolean raining = headerWeather == HEADER_WEATHER_RAIN;
+        if (raining && homeRainDelayNotice.getVisibility() != View.VISIBLE) {
+            homeRainDelayNotice.animate().cancel();
+            homeRainDelayNotice.setAlpha(0f);
+            homeRainDelayNotice.setTranslationY(-dp(8));
+            homeRainDelayNotice.setVisibility(View.VISIBLE);
+            homeRainDelayNotice.animate().alpha(1f).translationY(0f).setDuration(220L)
+                    .setInterpolator(new DecelerateInterpolator()).start();
+        } else if (!raining && homeRainDelayNotice.getVisibility() == View.VISIBLE) {
+            homeRainDelayNotice.animate().cancel();
+            homeRainDelayNotice.animate().alpha(0f).translationY(-dp(6)).setDuration(160L)
+                    .setInterpolator(new DecelerateInterpolator()).withEndAction(() -> {
+                        if (homeRainDelayNotice != null && headerWeather != HEADER_WEATHER_RAIN) {
+                            homeRainDelayNotice.setVisibility(View.GONE);
+                            homeRainDelayNotice.setAlpha(1f);
+                            homeRainDelayNotice.setTranslationY(0f);
+                        }
+                    }).start();
+        }
+    }
+
+    private View premiumRainDelayNotice() {
+        LinearLayout notice = horizontal();
+        notice.setGravity(Gravity.CENTER_VERTICAL);
+        notice.setPadding(dp(11), dp(9), dp(13), dp(9));
+        notice.setBackground(stroke(Color.rgb(255, 248, 250), Color.rgb(244, 203, 214), dp(18)));
+        notice.setElevation(dp(2));
+        notice.addView(premiumRainNoticeIcon(), new LinearLayout.LayoutParams(dp(40), dp(40)));
+
+        LinearLayout copy = vertical();
+        copy.setPadding(dp(10), 0, 0, 0);
+        TextView title = text("Weather advisory", 12, Color.rgb(138, 16, 53), true);
+        title.setIncludeFontPadding(false);
+        TextView message = text("Rain is confirmed nearby — your partner may arrive a little later.", 11,
+                Color.rgb(95, 76, 84), false);
+        message.setIncludeFontPadding(false);
+        message.setLineSpacing(dp(1), 1f);
+        copy.addView(title, margin(-1, -2, 0, 0, 0, dp(3)));
+        copy.addView(message);
+        notice.addView(copy, new LinearLayout.LayoutParams(0, -2, 1));
+        notice.setContentDescription("Weather advisory. Rain is confirmed nearby. Your partner may arrive a little later.");
+        return notice;
+    }
+
+    private View premiumRainNoticeIcon() {
+        FrameLayout holder = new FrameLayout(this);
+        holder.setBackground(round(Color.rgb(255, 228, 236), dp(14)));
+        holder.addView(new View(this) {
+            private final Paint iconPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+
+            @Override protected void onDraw(Canvas canvas) {
+                super.onDraw(canvas);
+                float density = getResources().getDisplayMetrics().density;
+                iconPaint.setColor(Color.rgb(209, 22, 70));
+                iconPaint.setStyle(Paint.Style.STROKE);
+                iconPaint.setStrokeWidth(1.9f * density);
+                iconPaint.setStrokeCap(Paint.Cap.ROUND);
+                iconPaint.setStrokeJoin(Paint.Join.ROUND);
+                float cx = getWidth() / 2f;
+                float cy = getHeight() / 2f - 2f * density;
+                RectF cloud = new RectF(cx - 11f * density, cy - 2f * density,
+                        cx + 11f * density, cy + 7f * density);
+                canvas.drawRoundRect(cloud, 5f * density, 5f * density, iconPaint);
+                canvas.drawCircle(cx - 4f * density, cy - 3f * density, 4f * density, iconPaint);
+                canvas.drawCircle(cx + 3f * density, cy - 5f * density, 5f * density, iconPaint);
+                canvas.drawLine(cx - 6f * density, cy + 11f * density, cx - 8f * density,
+                        cy + 15f * density, iconPaint);
+                canvas.drawLine(cx, cy + 11f * density, cx - 2f * density,
+                        cy + 15f * density, iconPaint);
+                canvas.drawLine(cx + 6f * density, cy + 11f * density, cx + 4f * density,
+                        cy + 15f * density, iconPaint);
+            }
+        }, new FrameLayout.LayoutParams(-1, -1));
+        return holder;
+    }
+
+    private void requestHomeHeaderWeather() {
+        if (activityDestroyed || !activityForeground || !"home".equals(currentScreen)
+                || backendClient == null || !hasServiceLocation) return;
+        long now = SystemClock.elapsedRealtime();
+        boolean sameArea = !Double.isNaN(headerWeatherLat)
+                && ServiceAreaPolicy.distanceKm(headerWeatherLat, headerWeatherLng, serviceLat, serviceLng) < 2d;
+        if (!sameArea) {
+            headerWeather = HEADER_WEATHER_CLEAR;
+            updateHomeRainNotice();
+        }
+        if (headerWeatherRequestInFlight || (sameArea && now - headerWeatherFetchedAtMillis < 60_000L)) {
+            return;
+        }
+        headerWeatherRequestInFlight = true;
+        final double requestedLat = serviceLat;
+        final double requestedLng = serviceLng;
+        backendClient.fetchCurrentWeather(requestedLat, requestedLng, new BackendClient.JsonCallback() {
+            @Override public void onSuccess(JSONObject object) {
+                headerWeatherRequestInFlight = false;
+                if (activityDestroyed) return;
+                if (ServiceAreaPolicy.distanceKm(requestedLat, requestedLng, serviceLat, serviceLng) >= 2d) {
+                    requestHomeHeaderWeather();
+                    return;
+                }
+                JSONObject current = object == null ? null : object.optJSONObject("current");
+                long observedAtMillis = current == null ? 0L : current.optLong("observedAtEpochMs", 0L);
+                if (observedAtMillis <= 0L && object != null) {
+                    // Compatibility with the already-deployed weather endpoint. Its fetchedAt timestamp
+                    // is server-generated, so it remains a safe freshness gate until the richer route deploys.
+                    observedAtMillis = parseBackendIsoMillis(object.optString("fetchedAt", ""));
+                }
+                String weatherSource = object == null ? "" : object.optString("source", "");
+                boolean trustedWeatherProvider = object != null && (object.optBoolean("weatherValidated", false)
+                        || (object.optBoolean("ok", false) && ("open-meteo".equals(weatherSource)
+                        || "open-meteo-current".equals(weatherSource))));
+                boolean validatedFreshReading = trustedWeatherProvider && observedAtMillis > 0L
+                        && Math.abs(System.currentTimeMillis() - observedAtMillis) <= 15L * 60L * 1000L;
+                if (!validatedFreshReading) {
+                    clearRainCandidate();
+                    headerWeather = HEADER_WEATHER_CLEAR;
+                    headerWeatherLat = requestedLat;
+                    headerWeatherLng = requestedLng;
+                    headerWeatherFetchedAtMillis = SystemClock.elapsedRealtime();
+                    updateHomeRainNotice();
+                    if (homeWeatherOverlay != null && homeWeatherOverlay.getParent() != null) {
+                        homeWeatherOverlay.invalidate();
+                    }
+                    return;
+                }
+                int code = current.optInt("weather_code", 0);
+                boolean confirmedWetSample = RainConfirmationPolicy.isMeasuredRain(
+                        current.optDouble("precipitation", 0d),
+                        current.optDouble("rain", 0d),
+                        current.optDouble("showers", 0d), code);
+                applyRainObservation(confirmedWetSample, requestedLat, requestedLng);
+                headerWeatherLat = requestedLat;
+                headerWeatherLng = requestedLng;
+                headerWeatherFetchedAtMillis = SystemClock.elapsedRealtime();
+                updateHomeRainNotice();
+                if (homeWeatherOverlay != null && homeWeatherOverlay.getParent() != null) {
+                    homeWeatherOverlay.invalidate();
+                }
+            }
+
+            @Override public void onError(String message) {
+                headerWeatherRequestInFlight = false;
+                headerWeather = HEADER_WEATHER_CLEAR;
+                updateHomeRainNotice();
+                if (homeWeatherOverlay != null && homeWeatherOverlay.getParent() != null) {
+                    homeWeatherOverlay.invalidate();
+                }
+            }
+        });
+    }
+
+    private long parseBackendIsoMillis(String value) {
+        if (TextUtils.isEmpty(value)) return 0L;
+        String[] formats = { "yyyy-MM-dd'T'HH:mm:ss.SSSX", "yyyy-MM-dd'T'HH:mm:ssX" };
+        for (String format : formats) {
+            try {
+                Date parsed = new SimpleDateFormat(format, Locale.US).parse(value);
+                if (parsed != null) return parsed.getTime();
+            } catch (Exception ignored) {
+                // Try the next accepted ISO-8601 precision.
+            }
+        }
+        return 0L;
+    }
+
+    private void applyRainObservation(boolean wetSample, double latitude, double longitude) {
+        long now = System.currentTimeMillis();
+        long candidateSince = secureLong(KEY_RAIN_CANDIDATE_SINCE);
+        long lastSeenAt = secureLong(KEY_RAIN_LAST_SEEN_AT);
+        double candidateLat = secureDouble(KEY_RAIN_CANDIDATE_LAT);
+        double candidateLng = secureDouble(KEY_RAIN_CANDIDATE_LNG);
+        boolean sameArea = !Double.isNaN(candidateLat) && !Double.isNaN(candidateLng)
+                && ServiceAreaPolicy.distanceKm(latitude, longitude, candidateLat, candidateLng) < 2d;
+        RainConfirmationPolicy.Result result = RainConfirmationPolicy.observe(wetSample, now,
+                candidateSince, lastSeenAt, sameArea, RAIN_CONFIRMATION_MS, RAIN_SAMPLE_MAX_GAP_MS);
+        if (result.reset) {
+            clearRainCandidate();
+            headerWeather = HEADER_WEATHER_CLEAR;
+            return;
+        }
+        if (result.candidateSince != candidateSince) {
+            putSecureString(KEY_RAIN_CANDIDATE_SINCE, String.valueOf(result.candidateSince));
+            putSecureString(KEY_RAIN_CANDIDATE_LAT, String.valueOf(latitude));
+            putSecureString(KEY_RAIN_CANDIDATE_LNG, String.valueOf(longitude));
+        }
+        putSecureString(KEY_RAIN_LAST_SEEN_AT, String.valueOf(result.lastSeenAt));
+        headerWeather = result.confirmedRain ? HEADER_WEATHER_RAIN : HEADER_WEATHER_CLEAR;
+    }
+
+    private void clearRainCandidate() {
+        removeSecureString(KEY_RAIN_CANDIDATE_SINCE);
+        removeSecureString(KEY_RAIN_LAST_SEEN_AT);
+        removeSecureString(KEY_RAIN_CANDIDATE_LAT);
+        removeSecureString(KEY_RAIN_CANDIDATE_LNG);
+    }
+
+    private long secureLong(String key) {
+        try { return Long.parseLong(secureString(key, "")); }
+        catch (Exception ignored) { return 0L; }
+    }
+
+    private double secureDouble(String key) {
+        try { return Double.parseDouble(secureString(key, "")); }
+        catch (Exception ignored) { return Double.NaN; }
+    }
+
+    private View homeWeatherEffectView() {
+        return new View(this) {
+            private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
+            private final long animationStartedAt = SystemClock.uptimeMillis();
+            private final Runnable weatherRefresh = new Runnable() {
+                @Override public void run() {
+                    if (!isAttachedToWindow()) return;
+                    requestHomeHeaderWeather();
+                    if (activityForeground) invalidate();
+                    postDelayed(this, 60_000L);
+                }
+            };
+
+            @Override protected void onAttachedToWindow() {
+                super.onAttachedToWindow();
+                post(weatherRefresh);
+            }
+
+            @Override protected void onDetachedFromWindow() {
+                removeCallbacks(weatherRefresh);
+                super.onDetachedFromWindow();
+            }
+
+            @Override protected void onDraw(Canvas canvas) {
+                super.onDraw(canvas);
+                if (headerWeather != HEADER_WEATHER_RAIN || !activityForeground || !isShown()) return;
+                float w = getWidth();
+                float rainHeight = Math.min(getHeight() * .60f, dp(245));
+                double elapsed = (SystemClock.uptimeMillis() - animationStartedAt) / 1000d;
+                paint.setStrokeCap(Paint.Cap.ROUND);
+                for (int i = 0; i < 26; i++) {
+                    float depth = .72f + (i % 4) * .09f;
+                    float x = ((i * 83f + (i % 3) * 29f) % (w + dp(40))) - dp(20);
+                    float y = (float) ((i * 61d + elapsed * rainHeight * (.75d + (i % 3) * .10d))
+                            % (rainHeight + dp(24))) - dp(24);
+                    paint.setColor(Color.argb((int) (105 * depth), 188, 225, 244));
+                    paint.setStrokeWidth(i % 4 == 0 ? dp(2) : dp(1));
+                    float length = dp(8 + i % 4 * 2);
+                    canvas.drawLine(x, y, x - dp(3), y + length, paint);
+                }
+                if (isAttachedToWindow()) postInvalidateOnAnimation();
+            }
+        };
+    }
+
+    /** Location is more useful than a wordmark on the booking home screen. The
+     * stored default address is shown without performing a new GPS lookup. */
+    private LinearLayout homeLocationHeader(boolean servicesClosed) {
+        LinearLayout top = horizontal();
+        top.setGravity(Gravity.CENTER_VERTICAL);
+        top.setPadding(0, 0, 0, dp(2));
+
+        LinearLayout location = vertical();
+        location.setPadding(dp(5), dp(1), dp(7), dp(1));
+        LinearLayout cityRow = horizontal();
+        cityRow.setGravity(Gravity.CENTER_VERTICAL);
+        cityRow.addView(homeHeaderGlyph(false), new LinearLayout.LayoutParams(dp(22), dp(22)));
+        TextView city = text(homeHeaderCity(), 15, BLACK, true);
+        homeCityLabel = city;
+        city.setSingleLine(true);
+        city.setShadowLayer(dp(2), 0, dp(1), Color.argb(220, 255, 255, 255));
+        cityRow.addView(city, new LinearLayout.LayoutParams(-2, -2));
+        View chevron = homeLocationChevron();
+        LinearLayout.LayoutParams chevronParams = new LinearLayout.LayoutParams(dp(18), dp(18));
+        chevronParams.setMargins(dp(4), dp(1), 0, 0);
+        cityRow.addView(chevron, chevronParams);
+        location.addView(cityRow);
+
+        TextView address = text(homeHeaderAddress(), 10, Color.rgb(45, 45, 48), false);
+        homeAddressLabel = address;
+        address.setSingleLine(true);
+        address.setEllipsize(TextUtils.TruncateAt.END);
+        address.setPadding(dp(22), 0, 0, 0);
+        address.setShadowLayer(dp(2), 0, dp(1), Color.argb(230, 255, 255, 255));
+        location.addView(address, margin(-1, -2, 0, 1, 0, 0));
+        location.setOnClickListener(view -> showHomeLocationPicker());
+        addPressAnimation(location);
+        top.addView(location, new LinearLayout.LayoutParams(dp(178), dp(45)));
+        top.addView(new View(this), new LinearLayout.LayoutParams(0, 1, 1));
+
+        if (servicesClosed) {
+            LinearLayout closed = horizontal();
+            closed.setGravity(Gravity.CENTER_VERTICAL);
+            closed.setPadding(dp(6), 0, dp(7), 0);
+            closed.setBackground(round(Color.argb(225, 21, 25, 30), dp(11)));
+            TextView clock = text("◷", 13, Color.WHITE, true);
+            clock.setGravity(Gravity.CENTER);
+            closed.addView(clock, new LinearLayout.LayoutParams(dp(19), dp(28)));
+            LinearLayout closedCopy = vertical();
+            TextView label = text("Closed", 10, Color.WHITE, true);
+            TextView hours = text(homeClosedHoursLabel(), 8, Color.argb(230, 255, 255, 255), false);
+            closedCopy.addView(label);
+            closedCopy.addView(hours);
+            closed.addView(closedCopy);
+            LinearLayout.LayoutParams closedParams = new LinearLayout.LayoutParams(-2, dp(34));
+            closedParams.setMargins(0, 0, dp(5), 0);
+            top.addView(closed, closedParams);
+        }
+
+        if (featureEnabled(FeatureRegistry.NOTIFICATIONS)) {
+            LinearLayout.LayoutParams bellParams = new LinearLayout.LayoutParams(dp(34), dp(38));
+            top.addView(homeNotificationBell(), bellParams);
+        }
+        return top;
+    }
+
+    private View homeLocationChevron() {
+        View chevron = new View(this) {
+            private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
+            private final Path path = new Path();
+            { setLayerType(View.LAYER_TYPE_SOFTWARE, null); }
+
+            @Override protected void onDraw(Canvas canvas) {
+                super.onDraw(canvas);
+                float w = getWidth();
+                float h = getHeight();
+                paint.setColor(BLACK);
+                paint.setStyle(Paint.Style.STROKE);
+                paint.setStrokeWidth(dp(2));
+                paint.setStrokeCap(Paint.Cap.ROUND);
+                paint.setStrokeJoin(Paint.Join.ROUND);
+                paint.setShadowLayer(dp(1), 0, dp(1), Color.argb(210, 255, 255, 255));
+                path.reset();
+                path.moveTo(w * .24f, h * .38f);
+                path.lineTo(w * .50f, h * .64f);
+                path.lineTo(w * .76f, h * .38f);
+                canvas.drawPath(path, paint);
+            }
+        };
+        chevron.setContentDescription("Choose location");
+        return chevron;
+    }
+
+    private View homeNotificationBell() {
+        FrameLayout button = new FrameLayout(this);
+        FrameLayout.LayoutParams bellParams = new FrameLayout.LayoutParams(dp(25), dp(25), Gravity.CENTER);
+        button.addView(homeHeaderGlyph(true), bellParams);
+
+        TextView unread = text("", 9, Color.WHITE, true);
+        unread.setGravity(Gravity.CENTER);
+        unread.setIncludeFontPadding(false);
+        unread.setTypeface(Typeface.create("sans-serif", Typeface.BOLD));
+        unread.setMinWidth(dp(18));
+        unread.setPadding(dp(4), 0, dp(4), dp(1));
+        unread.setVisibility(View.GONE);
+        unread.setBackground(round(Color.rgb(244, 42, 82), dp(10)));
+        unread.setElevation(dp(3));
+        FrameLayout.LayoutParams unreadParams = new FrameLayout.LayoutParams(-2, dp(18), Gravity.TOP | Gravity.END);
+        unreadParams.setMargins(0, dp(1), 0, 0);
+        button.addView(unread, unreadParams);
+        button.setOnClickListener(view -> showNotifications());
+        addPressAnimation(button);
+        refreshHomeNotificationBadge(unread);
+        return button;
+    }
+
+    private View homeHeaderGlyph(boolean bell) {
+        return new View(this) {
+            final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
+            final Path path = new Path();
+            { setLayerType(View.LAYER_TYPE_SOFTWARE, null); }
+            @Override protected void onDraw(Canvas canvas) {
+                super.onDraw(canvas);
+                float w = getWidth(), h = getHeight(), cx = w / 2f;
+                paint.setColor(BLACK);
+                paint.setShadowLayer(dp(1), 0, dp(1), Color.argb(230, 255, 255, 255));
+                paint.setStrokeWidth(Math.max(dp(1), w * .075f));
+                paint.setStrokeCap(Paint.Cap.ROUND);
+                paint.setStrokeJoin(Paint.Join.ROUND);
+                paint.setStyle(Paint.Style.STROKE);
+                if (bell) {
+                    path.reset();
+                    path.moveTo(w * .25f, h * .68f);
+                    path.quadTo(w * .32f, h * .56f, w * .34f, h * .38f);
+                    path.quadTo(w * .37f, h * .18f, cx, h * .18f);
+                    path.quadTo(w * .63f, h * .18f, w * .66f, h * .38f);
+                    path.quadTo(w * .68f, h * .56f, w * .75f, h * .68f);
+                    path.lineTo(w * .25f, h * .68f);
+                    canvas.drawPath(path, paint);
+                    canvas.drawArc(w * .43f, h * .66f, w * .57f, h * .82f, 0, 180, false, paint);
+                } else {
+                    path.reset();
+                    path.moveTo(cx, h * .92f);
+                    path.cubicTo(w * .39f, h * .74f, w * .24f, h * .59f, w * .24f, h * .38f);
+                    path.cubicTo(w * .24f, h * .17f, w * .36f, h * .08f, cx, h * .08f);
+                    path.cubicTo(w * .64f, h * .08f, w * .76f, h * .17f, w * .76f, h * .38f);
+                    path.cubicTo(w * .76f, h * .59f, w * .61f, h * .74f, cx, h * .92f);
+                    canvas.drawPath(path, paint);
+                    paint.setStyle(Paint.Style.FILL);
+                    canvas.drawCircle(cx, h * .37f, w * .10f, paint);
+                }
+            }
+        };
+    }
+
+    private void refreshHomeNotificationBadge(TextView badge) {
+        if (badge == null) return;
+        backendClient.fetchNotifications(1, 1, new BackendClient.JsonCallback() {
+            @Override public void onSuccess(JSONObject object) {
+                if (activityDestroyed || badge.getParent() == null) return;
+                userNotificationUnreadCount = Math.max(0, object.optInt("unreadCount", 0));
+                if (userNotificationUnreadCount <= 0) {
+                    badge.setVisibility(View.GONE);
+                    return;
+                }
+                badge.setText(userNotificationUnreadCount > 99
+                        ? "99+"
+                        : String.valueOf(userNotificationUnreadCount));
+                badge.setVisibility(View.VISIBLE);
+            }
+
+            @Override public void onError(String message) {
+                // The bell must remain usable even when a background count refresh fails.
+            }
+        });
+    }
+
+    private void requestHeaderLocation() {
+        if (!hasStartupLocationPermission()) {
+            showHomeLocationRequiredPrompt(true);
+            return;
+        }
+        LocationManager manager = (LocationManager) getSystemService(LOCATION_SERVICE);
+        if (manager == null || !isDeviceLocationEnabled(manager)) {
+            showHomeLocationRequiredPrompt(false);
+            return;
+        }
+        headerPrefersDetectedLocation = true;
+        headerLocationFixReady = false;
+        headerAddressLookupFailed = false;
+        headerAddressResolvedForCurrentFix = false;
+        headerFixLat = Double.NaN;
+        headerFixLng = Double.NaN;
+        refreshHomeLocationLabels();
+        clearHomeAvailabilityLocationRequest();
+        SafeToast.makeText(this, "Detecting your location…", Toast.LENGTH_SHORT).show();
+        checkHomeServiceAvailability(true);
+    }
+
+    private void ensureHomeLocationReady() {
+        if (activityDestroyed || !activityForeground || !loggedIn || !"home".equals(currentScreen)) return;
+        boolean hasManualSavedAddress = hasManualHomeAddressSelected();
+        boolean hasPersistedDetectedAddress = restorePersistedDetectedHomeHeader();
+        if (!hasStartupLocationPermission()) {
+            if (hasManualSavedAddress || hasPersistedDetectedAddress) {
+                dismissHomeLocationRequiredPrompt();
+                return;
+            }
+            maybeShowHomeLocationRequiredPrompt(true);
+            return;
+        }
+        LocationManager manager = (LocationManager) getSystemService(LOCATION_SERVICE);
+        if (manager == null || !isDeviceLocationEnabled(manager)) {
+            if (hasManualSavedAddress || hasPersistedDetectedAddress) {
+                dismissHomeLocationRequiredPrompt();
+                return;
+            }
+            maybeShowHomeLocationRequiredPrompt(false);
+            return;
+        }
+        dismissHomeLocationRequiredPrompt();
+        if (hasManualSavedAddress || hasPersistedDetectedAddress) {
+            // A cache is refreshed only when the foreground monitor or last-known location
+            // proves that the user crossed 50 m. Never force a GPS pass just because Home
+            // resumed after two minutes.
+            checkHomeServiceAvailability(false);
+            return;
+        }
+        if (!headerLocationFixReady) {
+            headerPrefersDetectedLocation = true;
+            checkHomeServiceAvailability(true);
+        }
+    }
+
+    private void dismissHomeLocationRequiredPrompt() {
+        if (homeLocationRequiredDialog != null && homeLocationRequiredDialog.isShowing()) {
+            homeLocationRequiredDialog.dismiss();
+        }
+    }
+
+    private void maybeShowHomeLocationRequiredPrompt(boolean permissionMissing) {
+        if (activityDestroyed || !activityForeground || !loggedIn || !"home".equals(currentScreen)) return;
+        long now = SystemClock.elapsedRealtime();
+        if (homeLocationRequiredDialog != null && homeLocationRequiredDialog.isShowing()) return;
+        if (now - lastHomeLocationPromptAtMillis < 8_000L) return;
+        lastHomeLocationPromptAtMillis = now;
+        showHomeLocationRequiredPrompt(permissionMissing);
+    }
+
+    private void showHomeLocationRequiredPrompt(boolean permissionMissing) {
+        if (activityDestroyed || isFinishing()) return;
+        if (homeLocationRequiredDialog != null && homeLocationRequiredDialog.isShowing()) {
+            homeLocationRequiredDialog.dismiss();
+        }
+        AlertDialog dialog = new AlertDialog.Builder(this).create();
+        homeLocationRequiredDialog = dialog;
+        LinearLayout sheet = vertical();
+        sheet.setPadding(dp(20), dp(12), dp(20), dp(22));
+        sheet.setBackground(premiumLocationPickerSheetDrawable());
+
+        View handle = new View(this);
+        handle.setBackground(round(Color.rgb(202, 193, 196), dp(3)));
+        LinearLayout.LayoutParams handleParams = new LinearLayout.LayoutParams(dp(40), dp(4));
+        handleParams.gravity = Gravity.CENTER_HORIZONTAL;
+        handleParams.setMargins(0, 0, 0, dp(18));
+        sheet.addView(handle, handleParams);
+
+        LinearLayout heading = horizontal();
+        heading.setGravity(Gravity.CENTER_VERTICAL);
+        heading.addView(premiumLocationPickerIcon(permissionMissing ? "current" : "pin", true),
+                new LinearLayout.LayoutParams(dp(58), dp(58)));
+        LinearLayout copy = vertical();
+        copy.setPadding(dp(12), 0, 0, 0);
+        TextView title = text(permissionMissing ? "Allow location access" : "Turn on device location",
+                20, Color.rgb(43, 19, 27), true);
+        title.setIncludeFontPadding(false);
+        copy.addView(title);
+        TextView message = text(permissionMissing
+                        ? "ApnaServo needs location permission to detect your address and route the correct nearby expert."
+                        : "Your phone location is off. Turn it on to refresh your exact address and service availability.",
+                13, Color.rgb(105, 91, 96), false);
+        message.setLineSpacing(dp(3), 1f);
+        copy.addView(message, margin(-1, -2, 0, dp(5), 0, 0));
+        heading.addView(copy, new LinearLayout.LayoutParams(0, -2, 1));
+        sheet.addView(heading);
+
+        LinearLayout actions = horizontal();
+        TextView later = text("Not now", 14, Color.rgb(105, 91, 96), true);
+        later.setGravity(Gravity.CENTER);
+        later.setBackground(stroke(Color.WHITE, Color.rgb(232, 216, 220), dp(15)));
+        later.setOnClickListener(view -> dialog.dismiss());
+        addPressAnimation(later);
+        actions.addView(later, margin(0, 48, 0, 0, 6, 0, 1));
+
+        TextView enable = text(permissionMissing ? "Allow location" : "Turn on location", 14, Color.WHITE, true);
+        enable.setGravity(Gravity.CENTER);
+        enable.setBackground(round(Color.rgb(215, 30, 72), dp(15)));
+        enable.setOnClickListener(view -> {
+            dialog.dismiss();
+            headerLocationWaitingForSettings = true;
+            if (permissionMissing) {
+                headerLocationPermissionPending = true;
+                if (!requestStartupLocationPermissionIfAvailable(true)) {
+                    headerLocationPermissionPending = false;
+                    openAppLocationPermissionSettings();
+                }
+            } else {
+                startActivity(new Intent(Settings.ACTION_LOCATION_SOURCE_SETTINGS));
+            }
+        });
+        addPressAnimation(enable);
+        actions.addView(enable, margin(0, 48, 6, 0, 0, 0, 1));
+        sheet.addView(actions, margin(-1, -2, 0, dp(20), 0, 0));
+
+        dialog.setView(sheet);
+        dialog.setOnDismissListener(ignored -> {
+            if (homeLocationRequiredDialog == dialog) homeLocationRequiredDialog = null;
+        });
+        dialog.setOnShowListener(ignored -> {
+            Window window = dialog.getWindow();
+            if (window == null) return;
+            window.setBackgroundDrawable(new ColorDrawable(Color.TRANSPARENT));
+            window.setDimAmount(0.58f);
+            window.setGravity(Gravity.BOTTOM);
+            window.setLayout(WindowManager.LayoutParams.MATCH_PARENT, WindowManager.LayoutParams.WRAP_CONTENT);
+            animatePremiumBottomSheetIn(sheet);
+        });
+        dialog.show();
+    }
+
+    private void showHomeLocationPicker() {
+        List<String> saved = savedServiceAddresses();
+        AlertDialog dialog = new AlertDialog.Builder(this).create();
+        LinearLayout sheet = vertical();
+        sheet.setPadding(dp(20), dp(11), dp(20), dp(22));
+        sheet.setBackground(premiumLocationPickerSheetDrawable());
+
+        View handle = new View(this);
+        handle.setBackground(round(Color.rgb(202, 193, 196), dp(3)));
+        LinearLayout.LayoutParams handleParams = new LinearLayout.LayoutParams(dp(40), dp(4));
+        handleParams.gravity = Gravity.CENTER_HORIZONTAL;
+        handleParams.setMargins(0, 0, 0, dp(17));
+        sheet.addView(handle, handleParams);
+
+        LinearLayout header = horizontal();
+        header.setGravity(Gravity.CENTER_VERTICAL);
+        header.addView(premiumLocationPickerIcon("pin", true), new LinearLayout.LayoutParams(dp(54), dp(54)));
+        LinearLayout copy = vertical();
+        copy.setPadding(dp(11), 0, dp(4), 0);
+        TextView title = text("Choose service location", 21, Color.rgb(35, 25, 29), true);
+        title.setIncludeFontPadding(false);
+        TextView subtitle = text("Find the right expert near you", 13, Color.rgb(114, 96, 103), false);
+        subtitle.setIncludeFontPadding(false);
+        copy.addView(title);
+        copy.addView(subtitle, margin(-1, -2, 0, dp(4), 0, 0));
+        header.addView(copy, new LinearLayout.LayoutParams(0, -2, 1));
+        View close = premiumLocationPickerCloseIcon();
+        close.setOnClickListener(view -> dismissPremiumBottomSheet(dialog, sheet, null));
+        addPressAnimation(close);
+        header.addView(close, new LinearLayout.LayoutParams(dp(42), dp(42)));
+        sheet.addView(header, margin(-1, -2, 0, 0, 0, 20));
+
+        sheet.addView(homeLocationChoiceRow("current", "Use my current location",
+                "Use GPS to detect your exact service area", true, view -> {
+                    dismissPremiumBottomSheet(dialog, sheet, this::requestHeaderLocation);
+                }), margin(-1, 76, 0, 0, 0, 10));
+        if (!saved.isEmpty()) {
+            sheet.addView(homeLocationChoiceRow("home", "Choose saved address",
+                    saved.size() == 1 ? "1 saved service address" : saved.size() + " saved service addresses",
+                    false, view -> {
+                        dismissPremiumBottomSheet(dialog, sheet, this::showSavedAddressDialog);
+                    }), margin(-1, 76, 0, 0, 0, 10));
+        }
+        sheet.addView(homeLocationChoiceRow("edit", "Enter address manually",
+                "Add house, street, city and PIN code", false, view -> {
+                    dismissPremiumBottomSheet(dialog, sheet, this::showManualHomeAddressDialog);
+                }), margin(-1, 76, 0, 0, 0, 14));
+
+        LinearLayout privacy = horizontal();
+        privacy.setGravity(Gravity.CENTER_VERTICAL);
+        privacy.setPadding(dp(12), dp(10), dp(12), dp(10));
+        privacy.setBackground(round(Color.rgb(250, 246, 247), dp(14)));
+        privacy.addView(premiumLocationPickerIcon("shield", false), new LinearLayout.LayoutParams(dp(28), dp(28)));
+        TextView privacyCopy = text("Used only for service availability and partner routing.", 11,
+                Color.rgb(114, 96, 103), false);
+        privacyCopy.setPadding(dp(8), 0, 0, 0);
+        privacyCopy.setLineSpacing(dp(1), 1f);
+        privacy.addView(privacyCopy, new LinearLayout.LayoutParams(0, -2, 1));
+        sheet.addView(privacy, margin(-1, -2, 0, 0, 0, 0));
+
+        dialog.setView(sheet);
+        dialog.setOnShowListener(ignored -> {
+            Window window = dialog.getWindow();
+            if (window == null) return;
+            window.setBackgroundDrawable(new ColorDrawable(Color.TRANSPARENT));
+            window.setDimAmount(0.60f);
+            window.setGravity(Gravity.BOTTOM);
+            window.setLayout(WindowManager.LayoutParams.MATCH_PARENT, WindowManager.LayoutParams.WRAP_CONTENT);
+            WindowManager.LayoutParams attributes = window.getAttributes();
+            attributes.windowAnimations = android.R.style.Animation_Dialog;
+            window.setAttributes(attributes);
+            animatePremiumBottomSheetIn(sheet);
+        });
+        dialog.show();
+    }
+
+    private void animatePremiumBottomSheetIn(View sheet) {
+        if (sheet == null || sheet.getVisibility() != View.VISIBLE) return;
+        sheet.animate().cancel();
+        if (isConstrainedDevice()) {
+            sheet.setAlpha(1f);
+            sheet.setTranslationY(0f);
+            return;
+        }
+        sheet.setAlpha(0f);
+        sheet.setTranslationY(dp(22));
+        sheet.animate().alpha(1f).translationY(0f).setDuration(220L)
+                .setInterpolator(new DecelerateInterpolator()).start();
+    }
+
+    private void dismissPremiumBottomSheet(AlertDialog dialog, View sheet, Runnable afterDismiss) {
+        if (dialog == null || !dialog.isShowing()) {
+            if (afterDismiss != null) afterDismiss.run();
+            return;
+        }
+        if (sheet == null || isConstrainedDevice()) {
+            dialog.dismiss();
+            if (afterDismiss != null) afterDismiss.run();
+            return;
+        }
+        sheet.animate().cancel();
+        sheet.animate().alpha(0f).translationY(dp(16)).setDuration(150L)
+                .setInterpolator(new DecelerateInterpolator()).withEndAction(() -> {
+                    if (dialog.isShowing()) dialog.dismiss();
+                    if (afterDismiss != null) afterDismiss.run();
+                }).start();
+    }
+
+    private View homeLocationChoiceRow(String icon, String title, String subtitle, boolean highlighted,
+            View.OnClickListener listener) {
+        LinearLayout row = horizontal();
+        row.setGravity(Gravity.CENTER_VERTICAL);
+        row.setPadding(dp(12), dp(8), dp(11), dp(8));
+        row.setBackground(stroke(highlighted ? Color.rgb(255, 244, 248) : Color.rgb(255, 255, 255),
+                highlighted ? Color.rgb(240, 148, 170) : Color.rgb(237, 223, 226), dp(19)));
+        row.setElevation(dp(highlighted ? 3 : 1));
+        row.addView(premiumLocationPickerIcon(icon, highlighted), new LinearLayout.LayoutParams(dp(52), dp(52)));
+        LinearLayout copy = vertical();
+        copy.setPadding(dp(11), 0, dp(4), 0);
+        TextView heading = text(title, 16, Color.rgb(42, 28, 34), true);
+        heading.setIncludeFontPadding(false);
+        copy.addView(heading);
+        TextView detail = text(subtitle, 12, Color.rgb(111, 94, 101), false);
+        detail.setIncludeFontPadding(false);
+        detail.setSingleLine(true);
+        detail.setEllipsize(TextUtils.TruncateAt.END);
+        copy.addView(detail, margin(-1, -2, 0, dp(5), 0, 0));
+        row.addView(copy, new LinearLayout.LayoutParams(0, -2, 1));
+        row.addView(premiumLocationPickerChevron(highlighted), new LinearLayout.LayoutParams(dp(30), dp(48)));
+        row.setOnClickListener(listener);
+        row.setContentDescription(title + ". " + subtitle);
+        addPressAnimation(row);
+        return row;
+    }
+
+    private GradientDrawable premiumLocationPickerSheetDrawable() {
+        GradientDrawable drawable = new GradientDrawable();
+        drawable.setColor(Color.rgb(255, 253, 253));
+        float radius = dp(28);
+        drawable.setCornerRadii(new float[] { radius, radius, radius, radius, radius, radius, radius, radius });
+        return drawable;
+    }
+
+    private View premiumLocationPickerIcon(final String kind, final boolean accent) {
+        FrameLayout holder = new FrameLayout(this);
+        int background = accent ? Color.rgb(255, 226, 236) : Color.rgb(248, 241, 243);
+        holder.setBackground(round(background, dp(16)));
+        holder.addView(new View(this) {
+            private final Paint iconPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+
+            @Override protected void onDraw(Canvas canvas) {
+                super.onDraw(canvas);
+                float scale = getResources().getDisplayMetrics().density;
+                float cx = getWidth() / 2f;
+                float cy = getHeight() / 2f;
+                iconPaint.setColor(accent ? Color.rgb(211, 22, 70) : Color.rgb(132, 93, 105));
+                iconPaint.setStyle(Paint.Style.STROKE);
+                iconPaint.setStrokeWidth(2f * scale);
+                iconPaint.setStrokeCap(Paint.Cap.ROUND);
+                iconPaint.setStrokeJoin(Paint.Join.ROUND);
+                if ("current".equals(kind)) {
+                    canvas.drawCircle(cx, cy, 9f * scale, iconPaint);
+                    canvas.drawCircle(cx, cy, 2.6f * scale, iconPaint);
+                    canvas.drawLine(cx, cy - 14f * scale, cx, cy - 10f * scale, iconPaint);
+                    canvas.drawLine(cx, cy + 10f * scale, cx, cy + 14f * scale, iconPaint);
+                    canvas.drawLine(cx - 14f * scale, cy, cx - 10f * scale, cy, iconPaint);
+                    canvas.drawLine(cx + 10f * scale, cy, cx + 14f * scale, cy, iconPaint);
+                } else if ("home".equals(kind)) {
+                    Path roof = new Path();
+                    roof.moveTo(cx - 12f * scale, cy - 1f * scale);
+                    roof.lineTo(cx, cy - 11f * scale);
+                    roof.lineTo(cx + 12f * scale, cy - 1f * scale);
+                    roof.lineTo(cx + 10f * scale, cy - 1f * scale);
+                    roof.lineTo(cx + 10f * scale, cy + 11f * scale);
+                    roof.lineTo(cx - 10f * scale, cy + 11f * scale);
+                    roof.lineTo(cx - 10f * scale, cy - 1f * scale);
+                    roof.close();
+                    canvas.drawPath(roof, iconPaint);
+                    canvas.drawLine(cx - 3f * scale, cy + 11f * scale, cx - 3f * scale,
+                            cy + 4f * scale, iconPaint);
+                    canvas.drawLine(cx + 3f * scale, cy + 11f * scale, cx + 3f * scale,
+                            cy + 4f * scale, iconPaint);
+                } else if ("edit".equals(kind)) {
+                    canvas.rotate(-45f, cx, cy);
+                    canvas.drawRoundRect(new RectF(cx - 3f * scale, cy - 11f * scale,
+                            cx + 3f * scale, cy + 9f * scale), 2f * scale, 2f * scale, iconPaint);
+                    canvas.drawLine(cx - 3f * scale, cy + 12f * scale, cx + 3f * scale,
+                            cy + 12f * scale, iconPaint);
+                    canvas.rotate(45f, cx, cy);
+                } else if ("shield".equals(kind)) {
+                    Path shield = new Path();
+                    shield.moveTo(cx, cy - 11f * scale);
+                    shield.lineTo(cx + 10f * scale, cy - 7f * scale);
+                    shield.lineTo(cx + 8f * scale, cy + 6f * scale);
+                    shield.quadTo(cx, cy + 13f * scale, cx - 8f * scale, cy + 6f * scale);
+                    shield.lineTo(cx - 10f * scale, cy - 7f * scale);
+                    shield.close();
+                    canvas.drawPath(shield, iconPaint);
+                    canvas.drawLine(cx - 4f * scale, cy, cx - 1f * scale, cy + 3f * scale, iconPaint);
+                    canvas.drawLine(cx - 1f * scale, cy + 3f * scale, cx + 5f * scale, cy - 4f * scale, iconPaint);
+                } else {
+                    Path pin = new Path();
+                    pin.moveTo(cx, cy + 13f * scale);
+                    pin.cubicTo(cx - 10f * scale, cy + 3f * scale, cx - 10f * scale,
+                            cy - 11f * scale, cx, cy - 11f * scale);
+                    pin.cubicTo(cx + 10f * scale, cy - 11f * scale, cx + 10f * scale,
+                            cy + 3f * scale, cx, cy + 13f * scale);
+                    canvas.drawPath(pin, iconPaint);
+                    canvas.drawCircle(cx, cy - 2f * scale, 3f * scale, iconPaint);
+                }
+            }
+        }, new FrameLayout.LayoutParams(-1, -1));
+        return holder;
+    }
+
+    private View premiumLocationPickerCloseIcon() {
+        FrameLayout close = new FrameLayout(this);
+        close.setBackground(round(Color.rgb(244, 240, 241), dp(14)));
+        close.addView(new View(this) {
+            private final Paint closePaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+            @Override protected void onDraw(Canvas canvas) {
+                float scale = getResources().getDisplayMetrics().density;
+                float cx = getWidth() / 2f;
+                float cy = getHeight() / 2f;
+                closePaint.setColor(Color.rgb(94, 79, 84));
+                closePaint.setStyle(Paint.Style.STROKE);
+                closePaint.setStrokeWidth(2f * scale);
+                closePaint.setStrokeCap(Paint.Cap.ROUND);
+                canvas.drawLine(cx - 6f * scale, cy - 6f * scale, cx + 6f * scale, cy + 6f * scale, closePaint);
+                canvas.drawLine(cx + 6f * scale, cy - 6f * scale, cx - 6f * scale, cy + 6f * scale, closePaint);
+            }
+        }, new FrameLayout.LayoutParams(-1, -1));
+        close.setContentDescription("Close location picker");
+        return close;
+    }
+
+    private View premiumLocationPickerChevron(final boolean accent) {
+        return new View(this) {
+            private final Paint chevronPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+            @Override protected void onDraw(Canvas canvas) {
+                float scale = getResources().getDisplayMetrics().density;
+                float cx = getWidth() / 2f;
+                float cy = getHeight() / 2f;
+                chevronPaint.setColor(accent ? Color.rgb(211, 22, 70) : Color.rgb(127, 108, 115));
+                chevronPaint.setStyle(Paint.Style.STROKE);
+                chevronPaint.setStrokeWidth(2f * scale);
+                chevronPaint.setStrokeCap(Paint.Cap.ROUND);
+                chevronPaint.setStrokeJoin(Paint.Join.ROUND);
+                Path path = new Path();
+                path.moveTo(cx - 3f * scale, cy - 6f * scale);
+                path.lineTo(cx + 4f * scale, cy);
+                path.lineTo(cx - 3f * scale, cy + 6f * scale);
+                canvas.drawPath(path, chevronPaint);
+            }
+        };
+    }
+
+    private void showManualHomeAddressDialog() {
+        EditText input = new EditText(this);
+        input.setHint("House, street, locality, city, state, PIN");
+        input.setText(secureString(KEY_DEFAULT_SAVED_ADDRESS, ""));
+        input.setSingleLine(false);
+        input.setMinLines(2);
+        input.setPadding(dp(18), dp(12), dp(18), dp(12));
+        AlertDialog dialog = new AlertDialog.Builder(this)
+                .setTitle("Enter your address")
+                .setMessage("This sets the Home header. The exact service address is confirmed again during booking.")
+                .setView(input)
+                .setNegativeButton("Cancel", null)
+                .setPositiveButton("Save address", null)
+                .create();
+        dialog.setOnShowListener(ignored -> dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(view -> {
+            String address = input.getText().toString().trim();
+            if (address.length() < 10) {
+                input.setError("Enter a complete address");
+                return;
+            }
+            headerPrefersDetectedLocation = false;
+            putSecureString(KEY_DEFAULT_SAVED_ADDRESS, address);
+            rememberSavedServiceAddress(address);
+            syncCustomerProfileToBackend();
+            dialog.dismiss();
+            if ("home".equals(currentScreen)) {
+                refreshHomeLocationLabels();
+            }
+        }));
+        dialog.show();
+    }
+
+    private boolean hasManualHomeAddressSelected() {
+        return !headerPrefersDetectedLocation
+                && !TextUtils.isEmpty(secureString(KEY_DEFAULT_SAVED_ADDRESS, "").trim());
+    }
+
+    private boolean hasPersistedDetectedHomeAddress() {
+        if (TextUtils.isEmpty(secureString(KEY_DETECTED_HOME_ADDRESS, "").trim())) return false;
+        try {
+            double latitude = Double.parseDouble(secureString(KEY_DETECTED_HOME_LAT, ""));
+            double longitude = Double.parseDouble(secureString(KEY_DETECTED_HOME_LNG, ""));
+            return Double.isFinite(latitude) && Double.isFinite(longitude)
+                    && Math.abs(latitude) <= 90d && Math.abs(longitude) <= 180d
+                    && !(latitude == 0d && longitude == 0d);
+        } catch (Exception ignored) {
+            return false;
+        }
+    }
+
+    /** Restore a real, previously reverse-geocoded address without starting GPS again. */
+    private boolean restorePersistedDetectedHomeHeader() {
+        if (hasManualHomeAddressSelected() || !hasPersistedDetectedHomeAddress()) return false;
+        try {
+            double latitude = Double.parseDouble(secureString(KEY_DETECTED_HOME_LAT, ""));
+            double longitude = Double.parseDouble(secureString(KEY_DETECTED_HOME_LNG, ""));
+            headerPrefersDetectedLocation = true;
+            headerFixLat = latitude;
+            headerFixLng = longitude;
+            headerLocationFixReady = true;
+            headerAddressLookupFailed = false;
+            headerAddressResolvedForCurrentFix = true;
+            // Reuse this verified coordinate for Home-only information such as availability
+            // and weather. Actual booking dispatch still validates a current strict device
+            // fix in its own flow.
+            serviceLat = latitude;
+            serviceLng = longitude;
+            hasServiceLocation = true;
+            homeServiceAreaState = ServiceAreaPolicy.evaluate(latitude, longitude);
+            return true;
+        } catch (Exception ignored) {
+            return false;
+        }
+    }
+
+    private boolean hasMovedFromPersistedDetectedHome(Location location) {
+        if (location == null || !hasPersistedDetectedHomeAddress()) return false;
+        try {
+            double latitude = Double.parseDouble(secureString(KEY_DETECTED_HOME_LAT, ""));
+            double longitude = Double.parseDouble(secureString(KEY_DETECTED_HOME_LNG, ""));
+            return ServiceAreaPolicy.distanceKm(location.getLatitude(), location.getLongitude(), latitude, longitude)
+                    >= homeHeaderStabilityDistanceKm(location);
+        } catch (Exception ignored) {
+            return false;
+        }
+    }
+
+    /**
+     * A 50 m move is meaningful only when the fix can actually distinguish it.  This avoids
+     * treating normal network-provider drift as customer movement, while real GPS fixes still
+     * refresh at the requested 50 m threshold.
+     */
+    private double homeHeaderStabilityDistanceKm(Location location) {
+        if (location == null || !location.hasAccuracy() || location.getAccuracy() <= 55f) {
+            return HOME_LOCATION_REFRESH_DISTANCE_KM;
+        }
+        double accuracyKm = Math.max(0d, location.getAccuracy()) / 1000d;
+        return Math.min(HOME_APPROXIMATE_FIX_STABILITY_MAX_KM,
+                Math.max(HOME_APPROXIMATE_FIX_STABILITY_MIN_KM, accuracyKm * 3d));
+    }
+
+    private String homeHeaderCity() {
+        if (headerPrefersDetectedLocation) {
+            String cachedCity = secureString(KEY_DETECTED_HOME_CITY, "").trim();
+            if (!TextUtils.isEmpty(cachedCity) && cachedDetectedAddressMatchesHeaderFix()) {
+                return cachedCity;
+            }
+            String serviceCity = inferredHeaderCity();
+            if (!TextUtils.isEmpty(serviceCity)) return serviceCity;
+            return headerLocationFixReady ? "Current location" : "Detecting location";
+        }
+        String address = secureString(KEY_DEFAULT_SAVED_ADDRESS, "").trim();
+        String addressCity = cityFromAddressText(address);
+        if (!TextUtils.isEmpty(addressCity)) return addressCity;
+        if (!TextUtils.isEmpty(address)) return "Saved location";
+        String detectedCity = secureString(KEY_DETECTED_HOME_CITY, "").trim();
+        return TextUtils.isEmpty(detectedCity) ? "Select location" : detectedCity;
+    }
+
+    private String homeHeaderAddress() {
+        String detectedAddress = secureString(KEY_DETECTED_HOME_ADDRESS, "").trim();
+        // The encrypted address is the source of truth once it is geocoded. A coarse network
+        // callback can briefly change the in-memory generation flag even while the device is
+        // stationary; do not regress the visible header to a loader in that case.
+        if (headerPrefersDetectedLocation && !TextUtils.isEmpty(detectedAddress)
+                && (headerAddressResolvedForCurrentFix || cachedDetectedAddressMatchesHeaderFix())) {
+            return detectedAddress;
+        }
+        if (headerPrefersDetectedLocation) {
+            if (!headerLocationFixReady) return "Getting your exact address…";
+            if (headerAddressLookupFailed) {
+                return "Tap to select your building or landmark";
+            }
+            // Reverse geocoding can be slow or unavailable on OEM Android builds. Never leave
+            // a customer on a permanent spinner after their device location has been received.
+            if (SystemClock.elapsedRealtime() - homeGeocodeStartedAtMillis < 2_500L) {
+                return "Finding your building and landmark…";
+            }
+            return "Finding your exact address…";
+        }
+        String address = secureString(KEY_DEFAULT_SAVED_ADDRESS, "").trim();
+        if (!TextUtils.isEmpty(address)) return address;
+        return TextUtils.isEmpty(detectedAddress) ? "Add your home address" : detectedAddress;
+    }
+
+    private String cityFromAddressText(String rawAddress) {
+        if (TextUtils.isEmpty(rawAddress)) return "";
+        String[] parts = rawAddress.split(",");
+        if (parts.length < 2) return "";
+        for (int i = 0; i < parts.length; i++) {
+            String part = parts[i].trim();
+            if (part.toLowerCase(Locale.US).matches(".*\\bassam\\b.*") && i > 0) {
+                String city = parts[i - 1].trim();
+                if (!TextUtils.isEmpty(city) && city.length() <= 80) return city;
+            }
+        }
+        for (int i = parts.length - 1; i >= 0; i--) {
+            String candidate = parts[i].replaceAll("\\b\\d{6}\\b", "").trim();
+            String lower = candidate.toLowerCase(Locale.US);
+            if (candidate.length() >= 2 && candidate.length() <= 80
+                    && !"india".equals(lower) && !"assam".equals(lower)) return candidate;
+        }
+        return "";
+    }
+
+    /**
+     * Presentation fallback while Android's reverse-geocoder is resolving. It never makes
+     * Guwahati a global default: coordinates outside the active service area still show
+     * "Current location" until a real locality is returned.
+     */
+    private String inferredHeaderCity() {
+        if (Double.isNaN(headerFixLat) || Double.isNaN(headerFixLng)) return "";
+        return ServiceAreaPolicy.evaluate(headerFixLat, headerFixLng) == ServiceAreaPolicy.State.AVAILABLE
+                ? "Guwahati" : "";
+    }
+
+    private void rememberDetectedHomeLocation(Location location) {
+        rememberDetectedHomeLocation(location, true);
+    }
+
+    private void rememberDetectedHomeLocation(Location location, boolean syncProfile) {
+        if (!(syncProfile ? LocationQuality.usable(location) : LocationQuality.usableForHeader(location))) return;
+        final double latitude = location.getLatitude();
+        final double longitude = location.getLongitude();
+        long now = SystemClock.elapsedRealtime();
+        double stabilityDistanceKm = homeHeaderStabilityDistanceKm(location);
+        boolean samePlace = !Double.isNaN(headerFixLat) && !Double.isNaN(headerFixLng)
+                && ServiceAreaPolicy.distanceKm(latitude, longitude, headerFixLat, headerFixLng)
+                <= stabilityDistanceKm;
+        if (samePlace && now - homeGeocodeStartedAtMillis < HOME_GEOCODE_DEDUP_WINDOW_MS) {
+            // Keep the in-flight lookup alive. A later precise fix can still request profile
+            // sync when its address callback succeeds.
+            homeGeocodeSyncRequested |= syncProfile;
+            headerLocationFixReady = true;
+            refreshHomeLocationLabels();
+            return;
+        }
+        final int generation = ++homeGeocodeGeneration;
+        headerFixLat = latitude;
+        headerFixLng = longitude;
+        homeGeocodeStartedAtMillis = now;
+        homeGeocodeSyncRequested = syncProfile;
+        homeGeocodeRetryCount = 0;
+        cancelHomeGeocodeRetry();
+        boolean canReuseCachedAddress = cachedDetectedAddressMatches(latitude, longitude, stabilityDistanceKm);
+        headerLocationFixReady = true;
+        headerAddressLookupFailed = false;
+        headerAddressResolvedForCurrentFix = canReuseCachedAddress;
+        refreshHomeLocationLabels();
+        // Start the bounded fallback early. This still gives Android's reverse geocoder a fair
+        // chance, but a broken OEM provider can no longer keep the Home header loading forever.
+        scheduleHomeGeocodeRetryOrFallback(generation, latitude, longitude, syncProfile, 1_200L);
+        startHomeReverseGeocode(generation, latitude, longitude, syncProfile);
+    }
+
+    private void startHomeReverseGeocode(int generation, double latitude, double longitude, boolean syncProfile) {
+        if (!Geocoder.isPresent()) {
+            Log.w("HomeLocation", "Android reverse geocoder is unavailable on this device");
+            scheduleHomeGeocodeRetryOrFallback(generation, latitude, longitude, syncProfile, 0L);
+            return;
+        }
+        // en-IN produces a stable Indian locality/address format even when the device display
+        // language is changed. The user's own saved/manual address remains untouched.
+        Geocoder geocoder = new Geocoder(this, Locale.forLanguageTag("en-IN"));
+        Log.d("HomeLocation", "Starting reverse geocode for stable header fix; generation=" + generation);
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            try {
+                geocoder.getFromLocation(latitude, longitude, 1, new Geocoder.GeocodeListener() {
+                    @Override public void onGeocode(List<Address> addresses) {
+                        Log.d("HomeLocation", "Reverse geocoder returned "
+                                + (addresses == null ? 0 : addresses.size()) + " result(s)");
+                        handleHomeGeocodeResults(generation, addresses, syncProfile, latitude, longitude);
+                    }
+
+                    @Override public void onError(String errorMessage) {
+                        Log.w("HomeLocation", "Reverse geocoder error: " + String.valueOf(errorMessage));
+                        scheduleHomeGeocodeRetryOrFallback(generation, latitude, longitude, syncProfile,
+                                HOME_GEOCODE_RETRY_DELAY_MS);
+                    }
+                });
+            } catch (Exception ignored) {
+                Log.w("HomeLocation", "Reverse geocoder start failed", ignored);
+                scheduleHomeGeocodeRetryOrFallback(generation, latitude, longitude, syncProfile,
+                        HOME_GEOCODE_RETRY_DELAY_MS);
+            }
+            return;
+        }
+        executeGeocoderTask(() -> {
+            try {
+                List<Address> results = geocoder.getFromLocation(latitude, longitude, 1);
+                Log.d("HomeLocation", "Reverse geocoder returned "
+                        + (results == null ? 0 : results.size()) + " result(s)");
+                handleHomeGeocodeResults(generation, results, syncProfile, latitude, longitude);
+            } catch (Exception ignored) {
+                Log.w("HomeLocation", "Reverse geocoder failed", ignored);
+                scheduleHomeGeocodeRetryOrFallback(generation, latitude, longitude, syncProfile,
+                        HOME_GEOCODE_RETRY_DELAY_MS);
+            }
+        });
+    }
+
+    /**
+     * Android's geocoder depends on the phone's location service and can intermittently time
+     * out on some Android skins. Keep retries bounded and generation-scoped, then retain a
+     * truthful GPS fallback rather than repeatedly flickering the header.
+     */
+    private void scheduleHomeGeocodeRetryOrFallback(int generation, double latitude, double longitude,
+            boolean syncProfile, long delayMillis) {
+        if (activityDestroyed || homeGeocodeRetryRunnable != null) return;
+        Runnable retry = () -> {
+            homeGeocodeRetryRunnable = null;
+            if (activityDestroyed || !loggedIn || generation != homeGeocodeGeneration
+                    || headerAddressResolvedForCurrentFix) return;
+            if (homeGeocodeRetryCount >= HOME_GEOCODE_MAX_RETRIES) {
+                reportHomeAddressLookupFailure(generation);
+                return;
+            }
+            homeGeocodeRetryCount++;
+            startHomeReverseGeocode(generation, latitude, longitude,
+                    syncProfile || homeGeocodeSyncRequested);
+            scheduleHomeGeocodeRetryOrFallback(generation, latitude, longitude,
+                    syncProfile || homeGeocodeSyncRequested, HOME_GEOCODE_RETRY_DELAY_MS);
+        };
+        homeGeocodeRetryRunnable = retry;
+        carouselHandler.postDelayed(retry, Math.max(0L, delayMillis));
+    }
+
+    private void cancelHomeGeocodeRetry() {
+        if (homeGeocodeRetryRunnable != null) {
+            carouselHandler.removeCallbacks(homeGeocodeRetryRunnable);
+            homeGeocodeRetryRunnable = null;
+        }
+    }
+
+    private void handleHomeGeocodeResults(int generation, List<Address> results, boolean syncProfile,
+            double latitude, double longitude) {
+        if (results == null || results.isEmpty()) {
+            Log.w("HomeLocation", "Reverse geocoder returned no address");
+            scheduleHomeGeocodeRetryOrFallback(generation, latitude, longitude, syncProfile,
+                    HOME_GEOCODE_RETRY_DELAY_MS);
+            return;
+        }
+        Address result = results.get(0);
+        String city = result.getLocality();
+        if (TextUtils.isEmpty(city)) city = result.getSubAdminArea();
+        if (TextUtils.isEmpty(city)) city = result.getAdminArea();
+        String address = result.getAddressLine(0);
+        final String resolvedCity = city == null ? "" : city.trim();
+        final String resolvedAddress = formatHomeGeocodedAddress(result, address, resolvedCity);
+        runOnUiThread(() -> {
+            // A prior callback remains valid when the user has not meaningfully moved. This
+            // prevents jittering network fixes from discarding a valid address reply.
+            boolean nearbyCurrentFix = !Double.isNaN(headerFixLat) && !Double.isNaN(headerFixLng)
+                    && ServiceAreaPolicy.distanceKm(latitude, longitude, headerFixLat, headerFixLng)
+                    <= HOME_GEOCODE_DEDUP_DISTANCE_KM;
+            if (activityDestroyed || !loggedIn || (generation != homeGeocodeGeneration && !nearbyCurrentFix)) return;
+            cancelHomeGeocodeRetry();
+            homeGeocodeRetryCount = 0;
+            headerLocationFixReady = true;
+            headerAddressLookupFailed = TextUtils.isEmpty(resolvedAddress);
+            headerAddressResolvedForCurrentFix = !TextUtils.isEmpty(resolvedAddress);
+            Log.i("HomeLocation", "Header address "
+                    + (headerAddressResolvedForCurrentFix ? "resolved" : "empty")
+                    + "; city=" + resolvedCity);
+            if (!TextUtils.isEmpty(resolvedCity)) putSecureString(KEY_DETECTED_HOME_CITY, resolvedCity);
+            if (!TextUtils.isEmpty(resolvedAddress)) {
+                putSecureString(KEY_DETECTED_HOME_ADDRESS, resolvedAddress);
+                putSecureString(KEY_DETECTED_HOME_LAT, String.valueOf(latitude));
+                putSecureString(KEY_DETECTED_HOME_LNG, String.valueOf(longitude));
+                LocationManager manager = (LocationManager) getSystemService(LOCATION_SERVICE);
+                if (manager != null) startHomeLocationMovementMonitor(manager);
+            }
+            refreshHomeLocationLabels();
+            boolean shouldSyncProfile = syncProfile || homeGeocodeSyncRequested;
+            homeGeocodeSyncRequested = false;
+            if (shouldSyncProfile && !TextUtils.isEmpty(resolvedAddress)) {
+                pushDetectedProfileLocation(resolvedAddress, resolvedCity, latitude, longitude);
+            }
+        });
+    }
+
+    private String formatHomeGeocodedAddress(Address result, String addressLine, String city) {
+        ArrayList<String> parts = new ArrayList<>();
+        String feature = result == null ? "" : result.getFeatureName();
+        String premises = result == null ? "" : result.getPremises();
+        String subLocality = result == null ? "" : result.getSubLocality();
+        String adminArea = result == null ? "" : result.getAdminArea();
+        // A precise geocoder can provide a named premise/feature (for example, an apartment
+        // or landmark). Put that first so the compact Home header tells the customer where
+        // they are, not merely the city. Ignore bare street/house numbers as landmarks.
+        addHomeAddressPart(parts, premises, addressLine);
+        addHomeAddressPart(parts, feature, addressLine);
+        if (!TextUtils.isEmpty(addressLine)) parts.add(addressLine.trim());
+        if (!TextUtils.isEmpty(subLocality) && !parts.contains(subLocality.trim())) parts.add(subLocality.trim());
+        if (!TextUtils.isEmpty(city) && !parts.contains(city)) parts.add(city);
+        if (!TextUtils.isEmpty(adminArea) && !parts.contains(adminArea.trim())) parts.add(adminArea.trim());
+        return TextUtils.join(", ", parts).trim();
+    }
+
+    private void addHomeAddressPart(List<String> parts, String candidate, String addressLine) {
+        if (TextUtils.isEmpty(candidate)) return;
+        String value = candidate.trim();
+        if (value.length() < 3 || value.matches("[\\d\\s,/-]+")
+                || (!TextUtils.isEmpty(addressLine)
+                && addressLine.toLowerCase(Locale.US).contains(value.toLowerCase(Locale.US)))) return;
+        if (!parts.contains(value)) parts.add(value);
+    }
+
+    private boolean cachedDetectedAddressMatches(double latitude, double longitude) {
+        return cachedDetectedAddressMatches(latitude, longitude, HOME_LOCATION_REFRESH_DISTANCE_KM);
+    }
+
+    /** A saved result stays visible for a normal coarse-network wobble; precise GPS still
+     * uses the tighter movement rule before replacing it. */
+    private boolean cachedDetectedAddressMatchesHeaderFix() {
+        return !Double.isNaN(headerFixLat) && !Double.isNaN(headerFixLng)
+                && cachedDetectedAddressMatches(headerFixLat, headerFixLng,
+                HOME_APPROXIMATE_FIX_STABILITY_MAX_KM);
+    }
+
+    private boolean cachedDetectedAddressMatches(double latitude, double longitude, double toleranceKm) {
+        if (!hasPersistedDetectedHomeAddress()
+                || !Double.isFinite(latitude) || !Double.isFinite(longitude)) return false;
+        try {
+            double cachedLat = Double.parseDouble(secureString(KEY_DETECTED_HOME_LAT, ""));
+            double cachedLng = Double.parseDouble(secureString(KEY_DETECTED_HOME_LNG, ""));
+            return ServiceAreaPolicy.distanceKm(latitude, longitude, cachedLat, cachedLng)
+                    < Math.max(HOME_LOCATION_REFRESH_DISTANCE_KM, toleranceKm);
+        } catch (Exception ignored) {
+            return false;
+        }
+    }
+
+    private String gpsCoordinateLabel() {
+        if (Double.isNaN(headerFixLat) || Double.isNaN(headerFixLng)) {
+            return "GPS detected • Tap to enter exact address";
+        }
+        return String.format(Locale.US, "GPS %.5f, %.5f • Tap to refine", headerFixLat, headerFixLng);
+    }
+
+    private void refreshHomeLocationLabels() {
+        if (!"home".equals(currentScreen)) return;
+        updateHomeHeaderLabel(homeCityLabel, homeHeaderCity());
+        updateHomeHeaderLabel(homeAddressLabel, homeHeaderAddress());
+    }
+
+    /** Avoid unnecessary relayouts from frequent location callbacks and gently reveal a real
+     * city/address only when the displayed value actually changes. */
+    private void updateHomeHeaderLabel(TextView label, String value) {
+        if (label == null) return;
+        String display = value == null ? "" : value;
+        if (TextUtils.equals(label.getText(), display)) return;
+        label.animate().cancel();
+        label.setText(display);
+        label.setAlpha(0.6f);
+        label.animate().alpha(1f).setDuration(160L).setInterpolator(new DecelerateInterpolator()).start();
+    }
+
+    private void pushDetectedProfileLocation(String address, String city, double latitude, double longitude) {
+        if (backendClient == null || TextUtils.isEmpty(address) || firebaseAuth == null
+                || firebaseAuth.getCurrentUser() == null) return;
+        if (!headerPrefersDetectedLocation && !TextUtils.isEmpty(secureString(KEY_DEFAULT_SAVED_ADDRESS, ""))) return;
+        backendClient.upsertUserProfile(
+                customerName(), savedCustomerPhoneForBackend(), customerEmail(), address, city,
+                latitude, longitude, fcmToken(), new BackendClient.JsonCallback() {
+                    @Override public void onSuccess(JSONObject object) { rememberUserPublicId(object); }
+                    @Override public void onError(String message) {
+                        android.util.Log.w("HomeLocation", "Profile location sync deferred");
+                    }
+                });
+    }
+
+    private void reportHomeAddressLookupFailure(int generation) {
+        runOnUiThread(() -> {
+            if (activityDestroyed || !loggedIn || generation != homeGeocodeGeneration) return;
+            android.util.Log.w("HomeLocation", "Address lookup unavailable; device fix retained");
+            headerLocationFixReady = true;
+            boolean cachedAddressAvailable = cachedDetectedAddressMatches(headerFixLat, headerFixLng);
+            headerAddressLookupFailed = !cachedAddressAvailable;
+            headerAddressResolvedForCurrentFix = cachedAddressAvailable;
+            refreshHomeLocationLabels();
+        });
+    }
+
+    private String homeClosedHoursLabel() {
+        AppControlConfig.OperatingHours hours = appControl.operatingHours;
+        if (!hours.enabled) return "";
+        return formatHour(hours.opensAtHour) + " – " + formatHour(hours.closesAtHour);
+    }
+
+    private String formatHour(int hour) {
+        if (hour == 0 || hour == 24) return hour == 24 ? "12 AM" : "12 AM";
+        return hour > 12 ? (hour - 12) + " PM" : hour + " AM";
+    }
+
+    private void scheduleHomeHoursRefresh(boolean initiallyClosed) {
+        if (!appControl.operatingHours.enabled) return;
+        carouselHandler.postDelayed(() -> {
+            if (activityDestroyed || !"home".equals(currentScreen)) return;
+            if (initiallyClosed != !appControl.operatingHours.isOpenNow()) showHome();
+        }, 60_000L);
     }
 
     private GradientDrawable heroReadableOverlayDrawable() {
@@ -18948,8 +23084,15 @@ public class MainActivity extends Activity {
         bannerIndex = 0;
         applyHeroBackgroundSlide(slides, kicker, title, line, cta, background, dots, false);
         carouselRunnable = new Runnable() {
+            private final Rect visibleBounds = new Rect();
             @Override
             public void run() {
+                if (activityDestroyed || !banner.isAttachedToWindow() || !"home".equals(currentScreen)) return;
+                if (!activityForeground || SystemClock.elapsedRealtime() - lastHomeScrollMillis < 1200L
+                        || !banner.getGlobalVisibleRect(visibleBounds)) {
+                    carouselHandler.postDelayed(this, 2800);
+                    return;
+                }
                 bannerIndex = (bannerIndex + 1) % slides.size();
                 applyHeroBackgroundSlide(slides, kicker, title, line, cta, background, dots, true);
                 carouselHandler.postDelayed(this, 2800);
@@ -19031,7 +23174,7 @@ public class MainActivity extends Activity {
         int bannerImage = bannerServiceImageResource(service);
         int imageResource = bannerImage == 0 ? serviceLogoResource(service) : bannerImage;
         if (imageResource != 0) {
-            background.setImageResource(imageResource);
+            loadPublishedServiceImage(background, service, imageResource);
             background.setScaleType(ImageView.ScaleType.CENTER_CROP);
             background.setPadding(0, 0, 0, 0);
         }
@@ -19053,6 +23196,7 @@ public class MainActivity extends Activity {
                     .setStartDelay(i * 35L)
                     .setDuration(300)
                     .setInterpolator(new AccelerateDecelerateInterpolator())
+                    .withLayer()
                     .start();
         }
         background.animate().cancel();
@@ -19061,6 +23205,7 @@ public class MainActivity extends Activity {
                 .alpha(1f)
                 .setDuration(360)
                 .setInterpolator(new AccelerateDecelerateInterpolator())
+                .withLayer()
                 .start();
     }
 
@@ -19158,7 +23303,9 @@ public class MainActivity extends Activity {
 
     private ImageView jaapiHeaderImage(float rotation) {
         ImageView jaapi = new ImageView(this);
-        jaapi.setImageResource(R.drawable.ic_assam_jaapi);
+        Bitmap compactBitmap = compactIconBitmap(R.drawable.ic_assam_jaapi);
+        if (compactBitmap != null) jaapi.setImageBitmap(compactBitmap);
+        else jaapi.setImageResource(R.drawable.ic_assam_jaapi);
         jaapi.setAlpha(0.98f);
         jaapi.setRotation(rotation);
         jaapi.setAdjustViewBounds(true);
@@ -19170,7 +23317,9 @@ public class MainActivity extends Activity {
 
     private void addJaapiDecoration(FrameLayout banner, int gravity) {
         ImageView jaapi = new ImageView(this);
-        jaapi.setImageResource(R.drawable.ic_assam_jaapi);
+        Bitmap compactBitmap = compactIconBitmap(R.drawable.ic_assam_jaapi);
+        if (compactBitmap != null) jaapi.setImageBitmap(compactBitmap);
+        else jaapi.setImageResource(R.drawable.ic_assam_jaapi);
         jaapi.setAlpha(0.92f);
         jaapi.setRotation((gravity & Gravity.LEFT) == Gravity.LEFT ? -12f : 12f);
         jaapi.setAdjustViewBounds(true);
@@ -19319,7 +23468,7 @@ public class MainActivity extends Activity {
         if ("interior".equals(service.getId())) {
             return "INTERIOR";
         }
-        return service.getName().toUpperCase();
+        return service.getName().toUpperCase(Locale.ROOT);
     }
 
     private int bannerTitleSize(Service service) {
@@ -20075,7 +24224,7 @@ public class MainActivity extends Activity {
         int logo = quickAppliance ? R.drawable.quick_service_appliance : serviceLogoResource(service);
         if (logo != 0) {
             ImageView image = new ImageView(this);
-            Bitmap compactBitmap = quickAppliance ? compactIconBitmap(logo) : null;
+            Bitmap compactBitmap = compactIconBitmap(logo);
             if (compactBitmap != null) {
                 image.setImageBitmap(compactBitmap);
             } else {
@@ -20158,7 +24307,7 @@ public class MainActivity extends Activity {
 
             @Override
             public void onError(String message) {
-                Toast.makeText(MainActivity.this, "Could not update messages", Toast.LENGTH_SHORT).show();
+                SafeToast.makeText(MainActivity.this, "Could not update messages", Toast.LENGTH_SHORT).show();
             }
         }));
         screenContent.addView(markAll, margin(-1, 40, 20, 0, 20, 10));
@@ -20189,7 +24338,7 @@ public class MainActivity extends Activity {
                     list.removeAllViews();
                     list.addView(userNotificationEmptyCard("Messages unavailable", "Messages could not be loaded from the backend. Reopen the app or check your network connection."));
                 } else {
-                    Toast.makeText(MainActivity.this, "More messages could not be loaded", Toast.LENGTH_SHORT).show();
+                    SafeToast.makeText(MainActivity.this, "More messages could not be loaded", Toast.LENGTH_SHORT).show();
                 }
             }
         });
@@ -20319,11 +24468,13 @@ public class MainActivity extends Activity {
                 showDetail(selectedService);
                 break;
             case "OPEN_BOOKING":
+                openBookingDestination(TextUtils.isEmpty(actionId) ? bookingId : actionId, false, false);
+                break;
             case "OPEN_PAYMENT":
-                openBookingDestination(TextUtils.isEmpty(actionId) ? bookingId : actionId, false);
+                openBookingDestination(TextUtils.isEmpty(actionId) ? bookingId : actionId, false, true);
                 break;
             case "OPEN_BOOKING_CHAT":
-                openBookingDestination(TextUtils.isEmpty(actionId) ? bookingId : actionId, true);
+                openBookingDestination(TextUtils.isEmpty(actionId) ? bookingId : actionId, true, false);
                 break;
             case "OPEN_BOOKING_HISTORY":
                 showBookingsList();
@@ -20396,7 +24547,7 @@ public class MainActivity extends Activity {
             if ("search".equals(right)) {
                 rightView.setOnClickListener(view -> showServiceSearchDialog());
             } else if ("heart".equals(right)) {
-                rightView.setOnClickListener(view -> Toast.makeText(this, "Saved to favourites", Toast.LENGTH_SHORT).show());
+                rightView.setOnClickListener(view -> SafeToast.makeText(this, "Saved to favourites", Toast.LENGTH_SHORT).show());
             }
         }
         row.addView(rightView, new LinearLayout.LayoutParams(dp(42), dp(42)));
@@ -20426,7 +24577,7 @@ public class MainActivity extends Activity {
         addPressAnimation(card);
 
         ImageView visual = new ImageView(this);
-        visual.setImageResource(R.drawable.commercial_home_card);
+        loadBoundedDrawableResource(visual, R.drawable.commercial_home_card, 720, 410);
         visual.setScaleType(ImageView.ScaleType.CENTER_CROP);
         visual.setAdjustViewBounds(false);
         visual.setPadding(0, 0, 0, 0);
@@ -20776,7 +24927,7 @@ public class MainActivity extends Activity {
         warn.setBackground(round(Color.rgb(255, 238, 240), dp(10)));
         card.addView(warn, margin(-1, -2, 0, 10, 0, 0));
         body.addView(card, margin(-1, -2, 0, 0, 0, 18));
-        body.addView(commercialOutlineButton("Reschedule Visit", view -> Toast.makeText(this, "Reschedule request saved", Toast.LENGTH_SHORT).show()), margin(-1, 50, 0, 0, 0, 12));
+        body.addView(commercialOutlineButton("Reschedule Visit", view -> SafeToast.makeText(this, "Reschedule request saved", Toast.LENGTH_SHORT).show()), margin(-1, 50, 0, 0, 0, 12));
         body.addView(commercialPrimaryButton("Contact Manager", view -> showCommercialQuotationReady()), margin(-1, 50, 0, 0, 0, 0));
         screenContent.addView(body);
     }
@@ -20798,7 +24949,7 @@ public class MainActivity extends Activity {
         body.addView(commercialCheckRow("Testing & Commissioning"));
         body.addView(commercialCheckRow("Quality Assurance"));
         body.addView(commercialCheckRow("Post Completion Support"));
-        body.addView(commercialOutlineButton("Request Revision", view -> Toast.makeText(this, "Revision request saved", Toast.LENGTH_SHORT).show()), margin(-1, 50, 0, 24, 0, 12));
+        body.addView(commercialOutlineButton("Request Revision", view -> SafeToast.makeText(this, "Revision request saved", Toast.LENGTH_SHORT).show()), margin(-1, 50, 0, 24, 0, 12));
         body.addView(commercialPrimaryButton("Approve Quote", view -> showCommercialQuotationApproved()), margin(-1, 50, 0, 0, 0, 0));
         screenContent.addView(body);
     }
@@ -21011,7 +25162,7 @@ public class MainActivity extends Activity {
         body.addView(commercialSelectRow("Select Issue Type", "Choose issue type"), margin(-1, 58, 0, 0, 0, 14));
         body.addView(commercialMultilineInput("Describe the Issue", "Describe your issue", 5), margin(-1, 136, 0, 0, 0, 14));
         body.addView(commercialSelectRow("Preferred Date", "Select preferred date"), margin(-1, 58, 0, 0, 0, 70));
-        body.addView(commercialPrimaryButton("Submit Request", view -> Toast.makeText(this, "Commercial support request submitted", Toast.LENGTH_SHORT).show()), margin(-1, 50, 0, 0, 0, 12));
+        body.addView(commercialPrimaryButton("Submit Request", view -> SafeToast.makeText(this, "Commercial support request submitted", Toast.LENGTH_SHORT).show()), margin(-1, 50, 0, 0, 0, 12));
         body.addView(commercialOutlineButton("Call Support Team", view -> showSupportChat()), margin(-1, 50, 0, 0, 0, 0));
         screenContent.addView(body);
     }
@@ -21378,7 +25529,7 @@ public class MainActivity extends Activity {
         ImageView image = new ImageView(this);
         int resource = servicePhotoResource(service);
         if (resource != 0) {
-            image.setImageResource(resource);
+            loadPublishedServiceThumbnail(image, service, resource);
         } else {
             image.setImageResource(serviceLogoResource(service));
         }
@@ -21503,7 +25654,7 @@ public class MainActivity extends Activity {
         int photo = servicePhotoResource(service);
         if (photo != 0) {
             ImageView image = new ImageView(this);
-            image.setImageResource(photo);
+            loadPublishedServiceThumbnail(image, service, photo);
             image.setAdjustViewBounds(false);
             image.setScaleType(ImageView.ScaleType.FIT_CENTER);
             image.setBackgroundColor(Color.WHITE);
@@ -22008,8 +26159,11 @@ public class MainActivity extends Activity {
         dialog.show();
     }
 
+    private Runnable cancelBookingGpsRequest;
+
     @SuppressLint("MissingPermission")
     private void fetchCurrentLocation() {
+        if (cancelBookingGpsRequest != null) cancelBookingGpsRequest.run();
         setLocationStatus("Detecting exact location...", ORANGE);
         LocationManager manager = (LocationManager) getSystemService(LOCATION_SERVICE);
         if (manager == null) {
@@ -22040,16 +26194,46 @@ public class MainActivity extends Activity {
             return;
         }
 
-        try {
-            manager.requestSingleUpdate(provider, new LocationListener() {
+        final boolean[] found = {bestLocation != null};
+        final boolean[] finished = {false};
+        final Location[] bestFix = {bestLocation};
+        final EditText requestedAddress = addressInput;
+        final LocationListener listener = new LocationListener() {
                 @Override
                 public void onLocationChanged(Location location) {
-                    applyDetectedLocation(location, "Exact location updated. You can edit if needed.");
+                    if (finished[0] || addressInput != requestedAddress || isFinishing() || isDestroyed()) return;
+                    if (!LocationQuality.better(location, bestFix[0])) return;
+                    bestFix[0] = location;
+                    found[0] = true;
+                    applyDetectedLocation(location, "GPS location updated. Please confirm the address and pin.");
                 }
-            }, Looper.getMainLooper());
+        };
+        final Runnable timeout = () -> {
+            finished[0] = true;
+            try { manager.removeUpdates(listener); } catch (Exception ignored) {}
+            if (!found[0] && addressInput == requestedAddress && !isFinishing() && !isDestroyed()) {
+                setManualLocationFallback("No fresh precise GPS fix. Enable precise location, retry outdoors, or enter your address manually.");
+            }
+        };
+        cancelBookingGpsRequest = () -> {
+            finished[0] = true;
+            carouselHandler.removeCallbacks(timeout);
+            try { manager.removeUpdates(listener); } catch (Exception ignored) {}
+        };
+        carouselHandler.postDelayed(timeout, 25_000L);
+        try {
+            manager.requestLocationUpdates(provider, 1000L, 0f, listener, Looper.getMainLooper());
+            if (!LocationManager.NETWORK_PROVIDER.equals(provider)
+                    && manager.isProviderEnabled(LocationManager.NETWORK_PROVIDER)) {
+                try {
+                    manager.requestLocationUpdates(LocationManager.NETWORK_PROVIDER, 1000L, 0f, listener, Looper.getMainLooper());
+                } catch (SecurityException | IllegalArgumentException ignored) {}
+            }
         } catch (SecurityException exception) {
+            cancelBookingGpsRequest.run();
             setManualLocationFallback("Permission blocked. Please enter address manually.");
         } catch (IllegalArgumentException exception) {
+            cancelBookingGpsRequest.run();
             if (bestLocation == null) {
                 setManualLocationFallback("Location provider unavailable. Please enter address manually.");
             }
@@ -22063,7 +26247,7 @@ public class MainActivity extends Activity {
             List<String> providers = manager.getProviders(true);
             for (String provider : providers) {
                 Location location = manager.getLastKnownLocation(provider);
-                if (location != null && (best == null || location.getAccuracy() < best.getAccuracy())) {
+                if (LocationQuality.better(location, best)) {
                     best = location;
                 }
             }
@@ -22107,7 +26291,7 @@ public class MainActivity extends Activity {
             try {
                 startActivity(new Intent(Settings.ACTION_LOCATION_SOURCE_SETTINGS));
             } catch (Exception exception) {
-                Toast.makeText(this, "Location settings unavailable", Toast.LENGTH_SHORT).show();
+                SafeToast.makeText(this, "Location settings unavailable", Toast.LENGTH_SHORT).show();
             }
         });
         addPressAnimation(open);
@@ -22124,7 +26308,7 @@ public class MainActivity extends Activity {
     }
 
     private void applyDetectedLocation(Location location, String message) {
-        if (addressInput == null) {
+        if (addressInput == null || !LocationQuality.usable(location)) {
             return;
         }
         serviceLat = location.getLatitude();
@@ -22132,11 +26316,14 @@ public class MainActivity extends Activity {
         hasServiceLocation = true;
         final double requestedLat = serviceLat;
         final double requestedLng = serviceLng;
-        addressInput.setText("Lat " + roundCoordinate(requestedLat) + ", Lng " + roundCoordinate(requestedLng));
+        final EditText targetAddress = addressInput;
+        final String coordinateText = "Lat " + roundCoordinate(requestedLat) + ", Lng " + roundCoordinate(requestedLng);
+        addressInput.setText(coordinateText);
         executeGeocoderTask(() -> {
             String resolved = formatLocation(location);
             runOnUiThread(() -> {
-                if (isFinishing() || isDestroyed() || addressInput == null) return;
+                if (isFinishing() || isDestroyed() || addressInput != targetAddress) return;
+                if (!coordinateText.equals(targetAddress.getText().toString())) return;
                 if (Math.abs(serviceLat - requestedLat) > 0.000001d || Math.abs(serviceLng - requestedLng) > 0.000001d) return;
                 addressInput.setText(resolved);
             });
@@ -22504,6 +26691,10 @@ public class MainActivity extends Activity {
     }
 
     private void startShine(View shine) {
+        if (isConstrainedDevice()) {
+            shine.setVisibility(View.GONE);
+            return;
+        }
         shine.addOnAttachStateChangeListener(new View.OnAttachStateChangeListener() {
             @Override
             public void onViewAttachedToWindow(View attachedView) {
@@ -22560,14 +26751,16 @@ public class MainActivity extends Activity {
     private void animateIn(View view, int delayMs) {
         view.animate().cancel();
         view.setAlpha(0f);
-        view.setTranslationY(dp(10));
-        int startDelay = Math.min(delayMs, 110);
+        // Keep page entry motion cheap. Large translations and long staggered
+        // animations make service screens visibly rebuild on older devices.
+        view.setTranslationY(isConstrainedDevice() ? 0f : dp(6));
+        int startDelay = isConstrainedDevice() ? 0 : Math.min(delayMs, 70);
         Runnable startAnimation = () -> view.animate()
                 .alpha(1f)
                 .translationY(0f)
                 .setStartDelay(startDelay)
-                .setDuration(230)
-                .setInterpolator(new AccelerateDecelerateInterpolator())
+                .setDuration(isConstrainedDevice() ? 120 : 180)
+                .setInterpolator(new DecelerateInterpolator())
                 .start();
         if (view.isAttachedToWindow()) {
             view.post(startAnimation);
@@ -22588,6 +26781,10 @@ public class MainActivity extends Activity {
     }
 
     private void startPulse(View view, float minAlpha, float maxAlpha, long durationMs) {
+        if (isConstrainedDevice()) {
+            view.setAlpha(maxAlpha);
+            return;
+        }
         ObjectAnimator alpha = ObjectAnimator.ofFloat(view, View.ALPHA, minAlpha, maxAlpha);
         alpha.setDuration(durationMs);
         alpha.setRepeatCount(ValueAnimator.INFINITE);
@@ -22598,6 +26795,11 @@ public class MainActivity extends Activity {
     }
 
     private void startScalePulse(View view, float from, float to, long durationMs) {
+        if (isConstrainedDevice()) {
+            view.setScaleX(1f);
+            view.setScaleY(1f);
+            return;
+        }
         ObjectAnimator scaleX = ObjectAnimator.ofFloat(view, View.SCALE_X, from, to);
         ObjectAnimator scaleY = ObjectAnimator.ofFloat(view, View.SCALE_Y, from, to);
         for (ObjectAnimator animator : new ObjectAnimator[]{scaleX, scaleY}) {
@@ -22630,20 +26832,24 @@ public class MainActivity extends Activity {
     private void addPressAnimation(View view) {
         view.setOnTouchListener((pressedView, event) -> {
             if (event.getActionMasked() == MotionEvent.ACTION_DOWN) {
+                pressedView.animate().cancel();
                 pressedView.animate()
-                        .scaleX(0.94f)
-                        .scaleY(0.94f)
-                        .alpha(0.86f)
-                        .setDuration(75)
-                        .setInterpolator(new AccelerateDecelerateInterpolator())
+                        // A subtle response feels premium; the previous 0.94 scale was too
+                        // aggressive on dense cards and could look like a layout jump.
+                        .scaleX(0.97f)
+                        .scaleY(0.97f)
+                        .alpha(0.93f)
+                        .setDuration(isConstrainedDevice() ? 0L : 85L)
+                        .setInterpolator(new DecelerateInterpolator())
                         .start();
             } else if (event.getActionMasked() == MotionEvent.ACTION_UP || event.getActionMasked() == MotionEvent.ACTION_CANCEL) {
+                pressedView.animate().cancel();
                 pressedView.animate()
                         .scaleX(1.0f)
                         .scaleY(1.0f)
                         .alpha(1.0f)
-                        .setDuration(150)
-                        .setInterpolator(new AccelerateDecelerateInterpolator())
+                        .setDuration(isConstrainedDevice() ? 0L : 145L)
+                        .setInterpolator(new DecelerateInterpolator())
                         .start();
             }
             return false;
@@ -22672,7 +26878,12 @@ public class MainActivity extends Activity {
         int logo = serviceLogoResource(service);
         if (logo != 0) {
             ImageView icon = new ImageView(this);
-            icon.setImageResource(logo);
+            Bitmap compactBitmap = compactIconBitmap(logo);
+            if (compactBitmap != null) {
+                icon.setImageBitmap(compactBitmap);
+            } else {
+                icon.setImageResource(logo);
+            }
             boolean imageLogo = hasEmbeddedServiceTitle(service);
             if (!imageLogo) {
                 icon.setColorFilter(iconColor(service));
@@ -22889,7 +27100,9 @@ public class MainActivity extends Activity {
 
     private View brandImageWordmark(int widthDp, int heightDp) {
         ImageView logo = new ImageView(this);
-        logo.setImageResource(R.drawable.apna_servo_wordmark);
+        Bitmap compactBitmap = compactIconBitmap(R.drawable.apna_servo_wordmark);
+        if (compactBitmap != null) logo.setImageBitmap(compactBitmap);
+        else logo.setImageResource(R.drawable.apna_servo_wordmark);
         logo.setAdjustViewBounds(true);
         logo.setScaleType(ImageView.ScaleType.FIT_CENTER);
         logo.setPadding(0, 0, 0, 0);
@@ -22918,7 +27131,18 @@ public class MainActivity extends Activity {
             supportReplySequence++;
             hideSupportTypingIndicator();
         }
+        // Clear the old page synchronously; animating dozens of outgoing cards would delay taps.
+        // Re-enable lightweight layout transitions on the next frame for dynamic header/banner
+        // insertions, then reveal the newly-built page using compositor-only properties.
+        screenContent.setLayoutTransition(null);
         screenContent.removeAllViews();
+        screenContent.post(this::installSmoothContentTransitions);
+        animateScreenContentIn();
+        // Never clear Glide/bitmap caches during navigation. Doing so forced the
+        // service and booking screens to synchronously recreate every visual,
+        // which was the main source of click-to-page jank on low-memory phones.
+        // Android lifecycle callbacks (onTrimMemory/onLowMemory) already release
+        // these caches when the OS genuinely needs the memory.
         mainScroll.setVerticalScrollBarEnabled(true);
         mainScroll.setOverScrollMode(View.OVER_SCROLL_IF_CONTENT_SCROLLS);
         mainScroll.post(() -> mainScroll.scrollTo(0, 0));

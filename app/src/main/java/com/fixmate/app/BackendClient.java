@@ -5,6 +5,7 @@ import android.content.SharedPreferences;
 import android.os.Build;
 import android.os.Handler;
 import android.os.Looper;
+import android.util.Log;
 
 import com.google.firebase.auth.FirebaseAuth;
 import com.google.firebase.crashlytics.FirebaseCrashlytics;
@@ -28,8 +29,11 @@ import okhttp3.OkHttpClient;
 import okhttp3.Request;
 import okhttp3.RequestBody;
 import okhttp3.Response;
+import okhttp3.ResponseBody;
+import okio.BufferedSource;
 
 final class BackendClient {
+    private static final String API_LOG = "ApnaServoApi";
     interface JsonCallback {
         void onSuccess(JSONObject object);
         void onError(String message);
@@ -37,6 +41,7 @@ final class BackendClient {
 
     private static final MediaType JSON = MediaType.get("application/json; charset=utf-8");
     private static final int MAX_TRANSIENT_RETRIES = 2;
+    private static final long MAX_RESPONSE_BYTES = 512L * 1024L;
     private static final long SLOW_REQUEST_MS = 9000L;
     private static final String LOCAL_DEVICE_TOKEN = "local-device-auth";
     private static final String INSTALLATION_PREFS = "apnaservo_user_installation";
@@ -49,15 +54,26 @@ final class BackendClient {
             .callTimeout(75, TimeUnit.SECONDS)
             .retryOnConnectionFailure(true)
             .build();
+    private static final OkHttpClient AUTH_HTTP = SHARED_HTTP.newBuilder()
+            .connectTimeout(10, TimeUnit.SECONDS)
+            .readTimeout(20, TimeUnit.SECONDS)
+            .writeTimeout(15, TimeUnit.SECONDS)
+            .callTimeout(25, TimeUnit.SECONDS)
+            // OTP submission is user-driven. Never replay it invisibly.
+            .retryOnConnectionFailure(false)
+            .build();
     private final FirebaseAuth auth = FirebaseAuth.getInstance();
     private final OkHttpClient http = SHARED_HTTP;
     private final Handler main = new Handler(Looper.getMainLooper());
+    private final Object tokenRefreshLock = new Object();
+    private final List<TokenCallback> tokenRefreshWaiters = new ArrayList<>();
+    private boolean tokenRefreshInFlight;
     private final NetworkStateMonitor networkMonitor;
     private final List<String> baseUrls;
     private final String devUid;
     private final String deviceId;
-    private String activeBaseUrl;
-    private String cachedToken = "";
+    private volatile String activeBaseUrl;
+    private volatile String cachedToken = "";
 
     private static Dispatcher createDispatcher() {
         Dispatcher dispatcher = new Dispatcher();
@@ -103,8 +119,33 @@ final class BackendClient {
         });
     }
 
+    void fetchCurrentWeather(double latitude, double longitude, JsonCallback callback) {
+        String path = String.format(java.util.Locale.US,
+                "/weather/current?lat=%.5f&lng=%.5f",
+                latitude, longitude);
+        publicGet(path, callback);
+    }
+
     void fetchAppControlConfig(JsonCallback callback) {
-        publicGet("/app-control/config?audience=users", callback == null ? silent() : callback);
+        publicGet("/app-control/config?app=customer&platform=android&audience=users", callback == null ? silent() : callback);
+    }
+
+    // Analytics is intentionally fire-and-forget: a slow or unavailable
+    // reporting endpoint must never delay navigation or prevent a booking.
+    void trackServiceClick(String screen, String serviceId, String serviceName, String category) {
+        if (serviceId == null || serviceId.trim().isEmpty()) return;
+        JSONObject body = new JSONObject();
+        try {
+            body.put("event", "service_clicked");
+            body.put("platform", "android");
+            body.put("screen", screen == null ? "home" : screen.trim());
+            body.put("serviceId", serviceId.trim());
+            body.put("serviceName", serviceName == null ? "" : serviceName.trim());
+            body.put("category", category == null ? "" : category.trim());
+        } catch (Exception ignored) {
+            return;
+        }
+        post("/users/activity", body, silent());
     }
 
     void sendOtp(String phone, String role, JsonCallback callback) {
@@ -144,13 +185,17 @@ final class BackendClient {
     }
 
     void upsertUserProfile(String name, String phone, String email, String address, double lat, double lng, String fcmToken, JsonCallback callback) {
+        upsertUserProfile(name, phone, email, address, "", lat, lng, fcmToken, callback);
+    }
+
+    void upsertUserProfile(String name, String phone, String email, String address, String city, double lat, double lng, String fcmToken, JsonCallback callback) {
         JSONObject body = new JSONObject();
         try {
             body.put("name", name);
             body.put("phone", phone);
             body.put("email", email == null ? "" : email);
             body.put("address", address == null ? "" : address);
-            body.put("city", "Guwahati");
+            body.put("city", city == null ? "" : city.trim());
             body.put("lat", lat);
             body.put("lng", lng);
             body.put("fcmToken", fcmToken == null ? "" : fcmToken);
@@ -297,6 +342,15 @@ final class BackendClient {
         patch("/bookings/" + bookingId + "/location", location == null ? new JSONObject() : location, callback);
     }
 
+    void updateBookingIssue(String bookingId, String issue, JsonCallback callback) {
+        JSONObject body = new JSONObject();
+        try {
+            body.put("issue", issue == null ? "" : issue.trim());
+        } catch (Exception ignored) {
+        }
+        patch("/bookings/" + bookingId + "/issue", body, callback);
+    }
+
     void createCallLog(String bookingId, String action, String reason, JsonCallback callback) {
         JSONObject body = new JSONObject();
         try {
@@ -315,6 +369,10 @@ final class BackendClient {
         } catch (Exception ignored) {
         }
         patch("/bookings/" + bookingId + "/status", body, callback);
+    }
+
+    void cancelBooking(String bookingId, JsonCallback callback) {
+        post("/bookings/" + bookingId + "/cancel", new JSONObject(), callback);
     }
 
     void counterOfferQuote(String bookingId, int amount, String message, JsonCallback callback) {
@@ -421,63 +479,63 @@ final class BackendClient {
                         cachedToken = result.getToken();
                         callback.onToken(cachedToken);
                     })
-                    .addOnFailureListener(error -> {
-                        if (!cachedToken.isEmpty()) {
-                            callback.onToken(cachedToken);
-                            return;
-                        }
-                        callback.onToken(LOCAL_DEVICE_TOKEN);
-                    });
+                    .addOnFailureListener(error -> retryTokenAfterFirebaseError(callback, error.getMessage()));
             return;
         }
-        callback.onToken(LOCAL_DEVICE_TOKEN);
+        callback.onError("AUTH_SESSION_MISSING: Please sign in again.");
+    }
+
+    void refreshAuthentication(TokenCallback callback) {
+        cachedToken = "";
+        if (isLocalDevelopmentBackend()) {
+            callback.onToken("local-development");
+            return;
+        }
+        if (auth.getCurrentUser() == null) {
+            callback.onError("AUTH_SESSION_MISSING: Please sign in again.");
+            return;
+        }
+        refreshTokenSingleFlight(callback);
     }
 
     private void retryTokenAfterFirebaseError(TokenCallback callback, String firstError) {
         if (auth.getCurrentUser() != null) {
-            auth.getCurrentUser().getIdToken(true)
-                    .addOnSuccessListener(result -> {
-                        cachedToken = result.getToken();
-                        callback.onToken(cachedToken);
-                    })
-                    .addOnFailureListener(forceError -> {
-                        if (auth.getCurrentUser() != null && auth.getCurrentUser().isAnonymous()) {
-                            auth.signOut();
-                            signInAndFetchToken(callback, forceError.getMessage());
-                            return;
-                        }
-                        if (!cachedToken.isEmpty()) {
-                            callback.onToken(cachedToken);
-                            return;
-                        }
-                        callback.onToken(LOCAL_DEVICE_TOKEN);
-                    });
+            refreshTokenSingleFlight(new TokenCallback() {
+                @Override public void onToken(String token) { callback.onToken(token); }
+                @Override public void onError(String message) { callback.onError(nonEmpty(message, firstError)); }
+            });
             return;
         }
-        signInAndFetchToken(callback, firstError);
+        callback.onError("AUTH_SESSION_MISSING: Please sign in again.");
     }
 
-    private void signInAndFetchToken(TokenCallback callback, String previousError) {
-        auth.signInAnonymously()
-                .addOnSuccessListener(result -> result.getUser().getIdToken(false)
-                        .addOnSuccessListener(token -> {
-                            cachedToken = token.getToken();
-                            callback.onToken(cachedToken);
-                        })
-                        .addOnFailureListener(error -> {
-                            if (!cachedToken.isEmpty()) {
-                                callback.onToken(cachedToken);
-                                return;
-                            }
-                            callback.onToken(LOCAL_DEVICE_TOKEN);
-                        }))
-                .addOnFailureListener(error -> {
-                    if (!cachedToken.isEmpty()) {
-                        callback.onToken(cachedToken);
-                        return;
-                    }
-                    callback.onToken(LOCAL_DEVICE_TOKEN);
-                });
+    private void refreshTokenSingleFlight(TokenCallback callback) {
+        synchronized (tokenRefreshLock) {
+            tokenRefreshWaiters.add(callback);
+            if (tokenRefreshInFlight) return;
+            tokenRefreshInFlight = true;
+        }
+        if (auth.getCurrentUser() == null) {
+            finishTokenRefresh("", "AUTH_SESSION_MISSING: Please sign in again.");
+            return;
+        }
+        auth.getCurrentUser().getIdToken(true)
+                .addOnSuccessListener(result -> finishTokenRefresh(result.getToken(), ""))
+                .addOnFailureListener(error -> finishTokenRefresh("", nonEmpty(error.getMessage(), "Firebase Auth token unavailable")));
+    }
+
+    private void finishTokenRefresh(String token, String error) {
+        List<TokenCallback> callbacks;
+        synchronized (tokenRefreshLock) {
+            callbacks = new ArrayList<>(tokenRefreshWaiters);
+            tokenRefreshWaiters.clear();
+            tokenRefreshInFlight = false;
+            cachedToken = token == null ? "" : token;
+        }
+        for (TokenCallback callback : callbacks) {
+            if (!cachedToken.isEmpty()) callback.onToken(cachedToken);
+            else callback.onError(error);
+        }
     }
 
     private String nonEmpty(String primary, String fallback) {
@@ -540,7 +598,7 @@ final class BackendClient {
             main.post(() -> callback.onError(message));
             return;
         }
-        String candidateBaseUrl = index == 0 ? activeBaseUrl : baseUrls.get(index);
+        String candidateBaseUrl = baseUrlForAttempt(index);
         Request.Builder builder = new Request.Builder()
                 .url(candidateBaseUrl + path)
                 .get();
@@ -557,8 +615,28 @@ final class BackendClient {
             @Override
             public void onResponse(Call call, Response response) throws IOException {
                 markRequestTiming(startedAt);
-                String text = response.body() == null ? "{}" : response.body().string();
+                String text;
+                try {
+                    text = readResponseText(response);
+                } catch (IOException error) {
+                    main.post(() -> callback.onError(NetworkError.safe(error.getMessage())));
+                    return;
+                }
                 if (!response.isSuccessful()) {
+                    logHttpFailure("GET", path, response.code(), text);
+                    if (response.code() == 401 && attempt <= MAX_TRANSIENT_RETRIES) {
+                        cachedToken = "";
+                        retryTokenAfterFirebaseError(new TokenCallback() {
+                            @Override public void onToken(String refreshedToken) {
+                                executeGetWithFallback(path, refreshedToken, callback, index, lastError, MAX_TRANSIENT_RETRIES + 1);
+                            }
+
+                            @Override public void onError(String message) {
+                                main.post(() -> callback.onError(NetworkError.forHttp(401)));
+                            }
+                        }, friendlyHttpError(response.code(), text));
+                        return;
+                    }
                     if (isTransientHttp(response.code()) && attempt < MAX_TRANSIENT_RETRIES) {
                         main.postDelayed(() -> executeGetWithFallback(path, token, callback, index, friendlyHttpError(response.code(), text), attempt + 1), retryDelay(attempt));
                         return;
@@ -602,26 +680,28 @@ final class BackendClient {
 
     private void executePublicWithFallback(String path, JSONObject body, JsonCallback callback, int index, String lastError, int attempt) {
         markCrashOperation("POST", path);
+        final boolean otpOperation = path != null && path.startsWith("/otp/");
+        final int retryLimit = otpOperation ? 0 : MAX_TRANSIENT_RETRIES;
         if (!networkMonitor.isOnline()) {
             main.post(() -> callback.onError(NetworkError.NO_INTERNET));
             return;
         }
-        if (index >= baseUrls.size()) {
+        if (index >= baseUrls.size() || (otpOperation && index > 0)) {
             networkMonitor.markConnectionProblem();
             String message = lastError == null || lastError.trim().isEmpty() ? NetworkError.SERVER : NetworkError.safe(lastError);
             main.post(() -> callback.onError(message));
             return;
         }
-        String candidateBaseUrl = index == 0 ? activeBaseUrl : baseUrls.get(index);
+        String candidateBaseUrl = baseUrlForAttempt(index);
         Request request = new Request.Builder()
                 .url(candidateBaseUrl + path)
                 .post(RequestBody.create((body == null ? new JSONObject() : body).toString(), JSON))
                 .build();
         long startedAt = System.currentTimeMillis();
-        http.newCall(request).enqueue(new Callback() {
+        (otpOperation ? AUTH_HTTP : http).newCall(request).enqueue(new Callback() {
             @Override
             public void onFailure(Call call, IOException e) {
-                if (attempt < MAX_TRANSIENT_RETRIES) {
+                if (attempt < retryLimit) {
                     main.postDelayed(() -> executePublicWithFallback(path, body, callback, index, NetworkError.forIOException(e, networkMonitor.isOnline()), attempt + 1), retryDelay(attempt));
                     return;
                 }
@@ -632,9 +712,16 @@ final class BackendClient {
             @Override
             public void onResponse(Call call, Response response) throws IOException {
                 markRequestTiming(startedAt);
-                String text = response.body() == null ? "{}" : response.body().string();
+                String text;
+                try {
+                    text = readResponseText(response);
+                } catch (IOException error) {
+                    main.post(() -> callback.onError(NetworkError.safe(error.getMessage())));
+                    return;
+                }
                 if (!response.isSuccessful()) {
-                    if (isTransientHttp(response.code()) && attempt < MAX_TRANSIENT_RETRIES) {
+                    logHttpFailure("POST", path, response.code(), text);
+                    if (isTransientHttp(response.code()) && attempt < retryLimit) {
                         main.postDelayed(() -> executePublicWithFallback(path, body, callback, index, friendlyHttpError(response.code(), text), attempt + 1), retryDelay(attempt));
                         return;
                     }
@@ -665,7 +752,7 @@ final class BackendClient {
             main.post(() -> callback.onError(message));
             return;
         }
-        String candidateBaseUrl = index == 0 ? activeBaseUrl : baseUrls.get(index);
+        String candidateBaseUrl = baseUrlForAttempt(index);
         Request request = new Request.Builder().url(candidateBaseUrl + path).get().build();
         long startedAt = System.currentTimeMillis();
         http.newCall(request).enqueue(new Callback() {
@@ -679,8 +766,15 @@ final class BackendClient {
 
             @Override public void onResponse(Call call, Response response) throws IOException {
                 markRequestTiming(startedAt);
-                String text = response.body() == null ? "{}" : response.body().string();
+                String text;
+                try {
+                    text = readResponseText(response);
+                } catch (IOException error) {
+                    main.post(() -> callback.onError(NetworkError.safe(error.getMessage())));
+                    return;
+                }
                 if (!response.isSuccessful()) {
+                    logHttpFailure("GET", path, response.code(), text);
                     if (isTransientHttp(response.code()) && attempt < MAX_TRANSIENT_RETRIES) {
                         main.postDelayed(() -> executePublicGetWithFallback(path, callback, index, friendlyHttpError(response.code(), text), attempt + 1), retryDelay(attempt));
                         return;
@@ -716,7 +810,7 @@ final class BackendClient {
             main.post(() -> callback.onError(message));
             return;
         }
-        String candidateBaseUrl = index == 0 ? activeBaseUrl : baseUrls.get(index);
+        String candidateBaseUrl = baseUrlForAttempt(index);
         RequestBody requestBody = RequestBody.create((body == null ? new JSONObject() : body).toString(), JSON);
         Request.Builder builder = new Request.Builder()
                 .url(candidateBaseUrl + path);
@@ -744,8 +838,29 @@ final class BackendClient {
             @Override
             public void onResponse(Call call, Response response) throws IOException {
                 markRequestTiming(startedAt);
-                String text = response.body() == null ? "{}" : response.body().string();
+                String text;
+                try {
+                    text = readResponseText(response);
+                } catch (IOException error) {
+                    main.post(() -> callback.onError(NetworkError.safe(error.getMessage())));
+                    return;
+                }
                 if (!response.isSuccessful()) {
+                    logHttpFailure(method, path, response.code(), text);
+                    if (response.code() == 401 && attempt <= MAX_TRANSIENT_RETRIES) {
+                        cachedToken = "";
+                        retryTokenAfterFirebaseError(new TokenCallback() {
+                            @Override public void onToken(String refreshedToken) {
+                                executeWithFallback(method, path, body, refreshedToken, callback, index,
+                                        NetworkError.forHttp(401), MAX_TRANSIENT_RETRIES + 1);
+                            }
+
+                            @Override public void onError(String message) {
+                                main.post(() -> callback.onError(NetworkError.forHttp(401)));
+                            }
+                        }, friendlyHttpError(response.code(), text));
+                        return;
+                    }
                     if (canAutoRetryBody(method, path, body) && isTransientHttp(response.code()) && attempt < MAX_TRANSIENT_RETRIES) {
                         main.postDelayed(() -> executeWithFallback(method, path, body, token, callback, index, friendlyHttpError(response.code(), text), attempt + 1), retryDelay(attempt));
                         return;
@@ -781,6 +896,21 @@ final class BackendClient {
         return code == 408 || code == 425 || code == 429 || code >= 500;
     }
 
+    private String readResponseText(Response response) throws IOException {
+        if (response == null || response.body() == null) return "{}";
+        try (ResponseBody body = response.body()) {
+            long advertisedLength = body.contentLength();
+            if (advertisedLength > MAX_RESPONSE_BYTES) {
+                throw new IOException("Server response is too large");
+            }
+            BufferedSource source = body.source();
+            if (source.request(MAX_RESPONSE_BYTES + 1L)) {
+                throw new IOException("Server response is too large");
+            }
+            return source.readUtf8();
+        }
+    }
+
     private void markCrashOperation(String method, String path) {
         String safePath = path == null ? "unknown" : path.trim();
         int query = safePath.indexOf('?');
@@ -806,11 +936,25 @@ final class BackendClient {
             backendCode = error.optString("code", "").trim();
         } catch (Exception ignored) {
         }
-        if ((code == 400 || code == 409 || code == 422 || code == 423 || code == 503) && !backendMessage.isEmpty()) {
-            return (backendCode.startsWith("APP_") ? backendCode + "\n" : "")
+        if (code != 401 && !backendMessage.isEmpty()) {
+            return (!backendCode.isEmpty() ? backendCode + "\n" : "")
                     + "Request Not Completed\n" + backendMessage;
         }
         return NetworkError.forHttp(code);
+    }
+
+    private void logHttpFailure(String method, String path, int httpCode, String body) {
+        String safePath = path == null ? "/unknown" : path;
+        int query = safePath.indexOf('?');
+        if (query >= 0) safePath = safePath.substring(0, query);
+        String backendCode = "";
+        try {
+            backendCode = new JSONObject(body == null ? "{}" : body).optString("code", "").trim();
+        } catch (Exception ignored) {
+        }
+        Log.w(API_LOG, "request_failed method=" + (method == null ? "REQUEST" : method)
+                + " path=" + safePath + " http=" + httpCode
+                + " backendCode=" + (backendCode.isEmpty() ? "none" : backendCode));
     }
 
     private String networkError(String message) {
@@ -886,10 +1030,22 @@ final class BackendClient {
     private List<String> buildBaseUrls() {
         LinkedHashSet<String> urls = new LinkedHashSet<>();
         addSecureUrl(urls, BuildConfig.APNA_SERVO_API_BASE_URL);
+        addSecureUrl(urls, BuildConfig.APNA_SERVO_API_BACKUP_URL);
         if (urls.isEmpty()) {
-            urls.add("https://apnaservobk-1.onrender.com/api");
+            urls.add("https://apnaservobk-98gz.onrender.com/api");
         }
         return new ArrayList<>(urls);
+    }
+
+    /** Active endpoint goes first, then every remaining configured endpoint exactly once. */
+    private String baseUrlForAttempt(int index) {
+        if (index == 0) return activeBaseUrl;
+        int remainingIndex = index - 1;
+        for (String configured : baseUrls) {
+            if (configured.equals(activeBaseUrl)) continue;
+            if (remainingIndex-- == 0) return configured;
+        }
+        return "";
     }
 
     private void addSecureUrl(LinkedHashSet<String> urls, String rawUrl) {

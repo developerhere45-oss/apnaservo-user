@@ -5,6 +5,6 @@
     <string name="address_hint">Address</string>
     <string name="issue_hint">Describe issue</string>
     <string name="slot_hint">Preferred slot</string>
-    <string name="starting_visit_price">Starting visit price</string>
+    <string name="starting_visit_price">Price after inspection</string>
     <string name="add_service">Add service</string>
 </resources>
