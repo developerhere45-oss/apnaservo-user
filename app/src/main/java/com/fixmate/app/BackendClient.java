@@ -148,6 +148,16 @@ final class BackendClient {
         post("/users/activity", body, silent());
     }
 
+    /**
+     * Asks the trusted backend to place an opted-in assistance call.  The app never talks to
+     * a calling/AI-provider directly, so provider credentials and the customer's phone number
+     * remain on the server.  The server must make this endpoint idempotent.
+     */
+    void requestEngagementAssistanceCall(JSONObject body, JsonCallback callback) {
+        post("/users/engagement/assistance-call", body,
+                callback == null ? silent() : callback);
+    }
+
     void sendOtp(String phone, String role, JsonCallback callback) {
         JSONObject body = new JSONObject();
         try {

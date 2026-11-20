@@ -1,15 +1,36 @@
 package com.fixmate.app;
 
+import org.json.JSONArray;
+import org.json.JSONObject;
+
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
+
 final class ServiceAreaPolicy {
     enum State { AVAILABLE, UNAVAILABLE, CHECKING, UNKNOWN }
 
-    // Same production boundary as the backend. This is deliberately centralized here;
-    // screens must not compare city-name strings or define their own coordinates.
-    static final double GUWAHATI_CENTER_LAT = 26.1445d;
-    static final double GUWAHATI_CENTER_LNG = 91.7362d;
-    static final double GUWAHATI_RADIUS_KM = 35d;
+    private static volatile List<Area> areas = Collections.singletonList(new Area("guwahati", 26.1445d, 91.7362d, 35d));
 
     private ServiceAreaPolicy() { }
+
+    /** Uses the published admin configuration. Invalid remote data never removes the bundled fallback. */
+    static void configure(JSONArray remoteAreas) {
+        if (remoteAreas == null) return;
+        List<Area> parsed = new ArrayList<>();
+        for (int i = 0; i < Math.min(remoteAreas.length(), 50); i++) {
+            JSONObject item = remoteAreas.optJSONObject(i);
+            if (item == null || !item.optBoolean("enabled", true)) continue;
+            double lat = item.optDouble("centerLat", Double.NaN);
+            double lng = item.optDouble("centerLng", Double.NaN);
+            double radius = item.optDouble("radiusKm", Double.NaN);
+            if (!Double.isFinite(lat) || !Double.isFinite(lng) || !Double.isFinite(radius)
+                    || lat < -90d || lat > 90d || lng < -180d || lng > 180d
+                    || radius < 1d || radius > 250d || (lat == 0d && lng == 0d)) continue;
+            parsed.add(new Area(item.optString("id", "area" + i), lat, lng, radius));
+        }
+        if (!parsed.isEmpty()) areas = Collections.unmodifiableList(parsed);
+    }
 
     static State evaluate(double latitude, double longitude) {
         if (!Double.isFinite(latitude) || !Double.isFinite(longitude)
@@ -18,8 +39,12 @@ final class ServiceAreaPolicy {
                 || (latitude == 0d && longitude == 0d)) {
             return State.UNKNOWN;
         }
-        return distanceKm(latitude, longitude, GUWAHATI_CENTER_LAT, GUWAHATI_CENTER_LNG)
-                <= GUWAHATI_RADIUS_KM ? State.AVAILABLE : State.UNAVAILABLE;
+        for (Area area : areas) {
+            if (distanceKm(latitude, longitude, area.latitude, area.longitude) <= area.radiusKm) {
+                return State.AVAILABLE;
+            }
+        }
+        return State.UNAVAILABLE;
     }
 
     static double distanceKm(double lat1, double lng1, double lat2, double lng2) {
@@ -29,5 +54,18 @@ final class ServiceAreaPolicy {
                 + Math.cos(Math.toRadians(lat1)) * Math.cos(Math.toRadians(lat2))
                 * Math.sin(dLng / 2d) * Math.sin(dLng / 2d);
         return 6371.0088d * 2d * Math.atan2(Math.sqrt(a), Math.sqrt(1d - a));
+    }
+
+    private static final class Area {
+        final String id;
+        final double latitude;
+        final double longitude;
+        final double radiusKm;
+        Area(String id, double latitude, double longitude, double radiusKm) {
+            this.id = id;
+            this.latitude = latitude;
+            this.longitude = longitude;
+            this.radiusKm = radiusKm;
+        }
     }
 }

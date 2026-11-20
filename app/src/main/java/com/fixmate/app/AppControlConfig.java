@@ -23,7 +23,7 @@ final class AppControlConfig {
 
     static final AppControlConfig DEFAULT = new AppControlConfig("", "", AppMode.LIVE,
             Launch.none(), Update.none(), Collections.emptyMap(), Collections.emptyMap(),
-            Media.none(), Collections.emptyList(), Collections.emptyList(), "", "", Collections.emptyList(), "#f32368", new JSONObject(), OperatingHours.none(), AssignmentUi.none());
+            Media.none(), Collections.emptyList(), Collections.emptyList(), "", "", Collections.emptyList(), "#f32368", new JSONObject(), OperatingHours.none(), AssignmentUi.none(), new JSONArray());
 
     final String version;
     final String updatedAt;
@@ -42,6 +42,7 @@ final class AppControlConfig {
     final JSONObject formSchemas;
     final OperatingHours operatingHours;
     final AssignmentUi assignmentUi;
+    final JSONArray serviceAreas;
     JSONArray headerNotices = new JSONArray();
     int sectionSpacing = -1;
     List<String> sectionOrder = java.util.Arrays.asList("quick_services", "commercial", "popular_services", "more_services", "feature_strip");
@@ -50,12 +51,12 @@ final class AppControlConfig {
             Launch launch, Update update, Map<String, Feature> features,
             Map<String, ServiceRule> services, Media media, List<ContentItem> announcements, List<ContentItem> banners, String uiHomeTitle, String uiHomeSubtitle, List<String> uiHiddenSections, String themePrimaryColor, JSONObject formSchemas) {
         this(version, updatedAt, mode, launch, update, features, services, media, announcements, banners,
-                uiHomeTitle, uiHomeSubtitle, uiHiddenSections, themePrimaryColor, formSchemas, OperatingHours.none(), AssignmentUi.none());
+                uiHomeTitle, uiHomeSubtitle, uiHiddenSections, themePrimaryColor, formSchemas, OperatingHours.none(), AssignmentUi.none(), new JSONArray());
     }
 
     private AppControlConfig(String version, String updatedAt, AppMode mode,
             Launch launch, Update update, Map<String, Feature> features,
-            Map<String, ServiceRule> services, Media media, List<ContentItem> announcements, List<ContentItem> banners, String uiHomeTitle, String uiHomeSubtitle, List<String> uiHiddenSections, String themePrimaryColor, JSONObject formSchemas, OperatingHours operatingHours, AssignmentUi assignmentUi) {
+            Map<String, ServiceRule> services, Media media, List<ContentItem> announcements, List<ContentItem> banners, String uiHomeTitle, String uiHomeSubtitle, List<String> uiHiddenSections, String themePrimaryColor, JSONObject formSchemas, OperatingHours operatingHours, AssignmentUi assignmentUi, JSONArray serviceAreas) {
         this.version = version;
         this.updatedAt = updatedAt;
         this.mode = mode;
@@ -73,6 +74,7 @@ final class AppControlConfig {
         this.formSchemas = formSchemas == null ? new JSONObject() : formSchemas;
         this.operatingHours = operatingHours == null ? OperatingHours.none() : operatingHours;
         this.assignmentUi = assignmentUi == null ? AssignmentUi.none() : assignmentUi;
+        this.serviceAreas = serviceAreas == null ? new JSONArray() : serviceAreas;
     }
 
     static AppControlConfig parse(JSONObject root) {
@@ -118,7 +120,7 @@ final class AppControlConfig {
                 ui == null ? "" : safe(ui, "homeTitle"), ui == null ? "" : safe(ui, "homeSubtitle"),
                 ui == null ? Collections.emptyList() : strings(ui.optJSONArray("hiddenSections")),
                 config.optJSONObject("theme") == null ? "#f32368" : safe(config.optJSONObject("theme"), "primaryColor"),
-                config.optJSONObject("forms"), OperatingHours.parse(config.optJSONObject("booking")), AssignmentUi.parse(config.optJSONObject("booking")));
+                config.optJSONObject("forms"), OperatingHours.parse(config.optJSONObject("booking")), AssignmentUi.parse(config.optJSONObject("booking")), config.optJSONArray("serviceAreas"));
         if (ui != null && ui.optJSONArray("headerNotices") != null) parsed.headerNotices = ui.optJSONArray("headerNotices");
         if (ui != null && ui.has("sectionSpacing")) parsed.sectionSpacing = Math.max(0, Math.min(32, ui.optInt("sectionSpacing", 18)));
         if (ui != null && ui.optJSONArray("sectionOrder") != null) {
@@ -140,7 +142,7 @@ final class AppControlConfig {
                 new LinkedHashMap<>(source.features), new LinkedHashMap<>(source.services),
                 source.media,
                 new ArrayList<>(source.announcements), new ArrayList<>(source.banners), source.uiHomeTitle,
-                source.uiHomeSubtitle, new ArrayList<>(source.uiHiddenSections), source.themePrimaryColor, source.formSchemas, source.operatingHours, source.assignmentUi);
+                source.uiHomeSubtitle, new ArrayList<>(source.uiHiddenSections), source.themePrimaryColor, source.formSchemas, source.operatingHours, source.assignmentUi, source.serviceAreas);
         result.headerNotices = source.headerNotices;
         result.sectionOrder = source.sectionOrder;
         result.sectionSpacing = source.sectionSpacing;

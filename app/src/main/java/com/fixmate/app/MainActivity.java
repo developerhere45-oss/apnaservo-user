@@ -216,6 +216,9 @@ public class MainActivity extends Activity {
     private static final String KEY_PENDING_BOOKING_CHAT_QUEUE = "pending_booking_chat_queue";
     private static final String KEY_NOTIFICATION_PERMISSION_EXPLAINED = "notification_permission_explained";
     private static final String KEY_NOTIFICATION_PERMISSION_SKIPPED = "notification_permission_skipped";
+    private static final String KEY_AI_ASSISTANCE_CALL_OPT_IN = "ai_assistance_call_opt_in";
+    private static final String KEY_AI_ASSISTANCE_CALL_PROMPTED = "ai_assistance_call_prompted";
+    private static final String KEY_AI_ASSISTANCE_CALL_REQUESTED_AT = "ai_assistance_call_requested_at";
     private static final String CHANNEL_BOOKING_REQUESTS = "user_booking_updates_v2";
     private static final String PRIVACY_POLICY_URL = "https://www.apnaservo.com/privacy-policy";
     private static final String DELETE_ACCOUNT_URL = "https://www.apnaservo.com/delete-account";
@@ -232,6 +235,10 @@ public class MainActivity extends Activity {
     private static final int MAX_SUPPORT_MESSAGE_CHARS = 1200;
     private static final long SUPPORT_DUPLICATE_SEND_WINDOW_MS = 8000L;
     private static final int NOTIFICATION_PAGE_SIZE = 25;
+    // This is foreground time only: background time must never result in an unexpected call.
+    private static final long AI_ASSISTANCE_CALL_ENGAGEMENT_MS = 5L * 60L * 1000L;
+    // A local backstop; the backend applies the authoritative rate limit too.
+    private static final long AI_ASSISTANCE_CALL_COOLDOWN_MS = 7L * 24L * 60L * 60L * 1000L;
 
     private final class OtpEditText extends EditText {
         private Runnable onEmptyDeleteListener;
@@ -605,6 +612,11 @@ public class MainActivity extends Activity {
     private boolean customerProfileSyncPending;
     private long lastBookingHistoryRefreshAt;
     private Runnable bookingChatPollRunnable;
+    private long assistanceForegroundStartedAt;
+    private long assistanceForegroundMillis;
+    private boolean assistanceCallRequestInFlight;
+    private Runnable assistanceCallRunnable;
+    private final java.util.LinkedHashSet<String> exploredServiceIds = new java.util.LinkedHashSet<>();
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -674,6 +686,7 @@ public class MainActivity extends Activity {
         backendClient.warmUp();
         appControlRepository = new AppControlRepository(this, backendClient);
         appControl = appControlRepository.cached();
+        ServiceAreaPolicy.configure(appControl.serviceAreas);
         applyRemoteTheme(appControl);
         backendSocketClient = new BackendSocketClient(backendClient);
         latestBackendBookingId = secureString(KEY_BACKEND_BOOKING_ID, "");
@@ -737,6 +750,8 @@ public class MainActivity extends Activity {
         if (loggedIn) {
             recoverCustomerIdentityFromFirebase();
             showHome();
+            resumeAssistanceEngagement();
+            carouselHandler.postDelayed(this::showAssistanceCallConsentIfNeeded, 700L);
             carouselHandler.postDelayed(this::startLoggedInBackgroundSync, 420);
             carouselHandler.postDelayed(this::applyPendingAdminDeepLink, 1200);
         } else {
@@ -1547,6 +1562,7 @@ public class MainActivity extends Activity {
 
     @Override
     protected void onPause() {
+        pauseAssistanceEngagement();
         activityForeground = false;
         // The short high-accuracy request is only useful while this Home screen is visible.
         // Cancelling it here avoids any background GPS work.
@@ -1568,6 +1584,9 @@ public class MainActivity extends Activity {
     @Override
     protected void onDestroy() {
         activityDestroyed = true;
+        if (assistanceCallRunnable != null) {
+            carouselHandler.removeCallbacks(assistanceCallRunnable);
+        }
         if (appUpdateDialog != null) appUpdateDialog.dismiss();
         if (appControlRepository != null) appControlRepository.dispose();
         stopBannerCarousel();
@@ -1612,6 +1631,7 @@ public class MainActivity extends Activity {
     protected void onResume() {
         super.onResume();
         activityForeground = true;
+        resumeAssistanceEngagement();
         if (headerLocationWaitingForSettings) {
             headerLocationWaitingForSettings = false;
             LocationManager manager = (LocationManager) getSystemService(LOCATION_SERVICE);
@@ -2316,6 +2336,7 @@ public class MainActivity extends Activity {
             if (activityDestroyed || isFinishing() || isDestroyed()) return;
             AppControlConfig previous = appControl;
             appControl = config == null ? AppControlConfig.DEFAULT : config;
+            ServiceAreaPolicy.configure(appControl.serviceAreas);
             applyRemoteTheme(appControl);
             if (activityForeground) applyAppControlUpdatePrompt();
             if (navBookings != null) {
@@ -4446,6 +4467,8 @@ public class MainActivity extends Activity {
     private void finishLoginAfterMobileReady(boolean continueWithLocationGate) {
         SafeToast.makeText(this, "Welcome to ApnaServo", Toast.LENGTH_SHORT).show();
         showHome();
+        resumeAssistanceEngagement();
+        carouselHandler.postDelayed(this::showAssistanceCallConsentIfNeeded, 700L);
         carouselHandler.postDelayed(this::startLoggedInBackgroundSync, 420);
         if (pendingBooking != null && pendingBookingService != null) {
             bookingSubmissionInFlight = true;
@@ -4453,6 +4476,108 @@ public class MainActivity extends Activity {
             carouselHandler.postDelayed(this::submitPendingBookingWithRetry, 700);
         }
         carouselHandler.postDelayed(this::applyPendingAdminDeepLink, 900);
+    }
+
+    /** Records a deliberate service-detail view, not a card merely rendered on screen. */
+    private void recordServiceExploration(Service service) {
+        if (service == null || TextUtils.isEmpty(service.getId())) return;
+        exploredServiceIds.add(service.getId().trim().toLowerCase(Locale.US));
+        scheduleAssistanceCallIfEligible();
+    }
+
+    private boolean hasAssistanceCallConsent() {
+        return getSharedPreferences(PREFS, MODE_PRIVATE)
+                .getBoolean(KEY_AI_ASSISTANCE_CALL_OPT_IN, false);
+    }
+
+    private void showAssistanceCallConsentIfNeeded() {
+        if (isFinishing() || isDestroyed() || !loggedIn || !isValidCustomerMobile(customerPhone())) return;
+        android.content.SharedPreferences preferences = getSharedPreferences(PREFS, MODE_PRIVATE);
+        if (preferences.getBoolean(KEY_AI_ASSISTANCE_CALL_PROMPTED, false)) {
+            scheduleAssistanceCallIfEligible();
+            return;
+        }
+        preferences.edit().putBoolean(KEY_AI_ASSISTANCE_CALL_PROMPTED, true).apply();
+        new AlertDialog.Builder(this)
+                .setTitle("Need help choosing a service?")
+                .setMessage("If you spend time exploring ApnaServo, may our AI assistant call this verified number to help you choose? You can decline; this is not needed to use the app.")
+                .setPositiveButton("Allow help calls", (dialog, ignored) -> {
+                    preferences.edit().putBoolean(KEY_AI_ASSISTANCE_CALL_OPT_IN, true).apply();
+                    scheduleAssistanceCallIfEligible();
+                })
+                .setNegativeButton("No thanks", (dialog, ignored) ->
+                        preferences.edit().putBoolean(KEY_AI_ASSISTANCE_CALL_OPT_IN, false).apply())
+                .show();
+    }
+
+    private void resumeAssistanceEngagement() {
+        if (!loggedIn || assistanceForegroundStartedAt != 0L) return;
+        assistanceForegroundStartedAt = SystemClock.elapsedRealtime();
+        scheduleAssistanceCallIfEligible();
+    }
+
+    private void pauseAssistanceEngagement() {
+        if (assistanceForegroundStartedAt != 0L) {
+            assistanceForegroundMillis += Math.max(0L,
+                    SystemClock.elapsedRealtime() - assistanceForegroundStartedAt);
+            assistanceForegroundStartedAt = 0L;
+        }
+        if (assistanceCallRunnable != null) carouselHandler.removeCallbacks(assistanceCallRunnable);
+    }
+
+    private long assistanceEngagementMillis() {
+        long active = assistanceForegroundStartedAt == 0L ? 0L
+                : Math.max(0L, SystemClock.elapsedRealtime() - assistanceForegroundStartedAt);
+        return assistanceForegroundMillis + active;
+    }
+
+    private void scheduleAssistanceCallIfEligible() {
+        if (backendClient == null || !loggedIn || !activityForeground || !hasAssistanceCallConsent()
+                || !isValidCustomerMobile(customerPhone()) || assistanceCallRequestInFlight) return;
+        long lastRequest = getSharedPreferences(PREFS, MODE_PRIVATE)
+                .getLong(KEY_AI_ASSISTANCE_CALL_REQUESTED_AT, 0L);
+        if (lastRequest > 0L && System.currentTimeMillis() - lastRequest < AI_ASSISTANCE_CALL_COOLDOWN_MS) return;
+        if (assistanceCallRunnable != null) carouselHandler.removeCallbacks(assistanceCallRunnable);
+        long remaining = Math.max(0L, AI_ASSISTANCE_CALL_ENGAGEMENT_MS - assistanceEngagementMillis());
+        assistanceCallRunnable = this::requestAssistanceCallAfterEngagement;
+        carouselHandler.postDelayed(assistanceCallRunnable, remaining);
+    }
+
+    private void requestAssistanceCallAfterEngagement() {
+        if (!activityForeground || assistanceEngagementMillis() < AI_ASSISTANCE_CALL_ENGAGEMENT_MS) {
+            scheduleAssistanceCallIfEligible();
+            return;
+        }
+        if (assistanceCallRequestInFlight || !hasAssistanceCallConsent()
+                || !isValidCustomerMobile(customerPhone())) return;
+        assistanceCallRequestInFlight = true;
+        JSONObject payload = new JSONObject();
+        try {
+            payload.put("event", "five_minute_service_exploration");
+            payload.put("platform", "android");
+            payload.put("foregroundEngagementMs", assistanceEngagementMillis());
+            payload.put("uniqueServiceCount", exploredServiceIds.size());
+            payload.put("serviceIds", new JSONArray(exploredServiceIds));
+            payload.put("consent", true);
+        } catch (Exception ignored) {
+            assistanceCallRequestInFlight = false;
+            return;
+        }
+        backendClient.requestEngagementAssistanceCall(payload, new BackendClient.JsonCallback() {
+            @Override public void onSuccess(JSONObject response) {
+                assistanceCallRequestInFlight = false;
+                // Persist only after acceptance. The backend remains authoritative for retries,
+                // quiet hours, and call-provider status.
+                getSharedPreferences(PREFS, MODE_PRIVATE).edit()
+                        .putLong(KEY_AI_ASSISTANCE_CALL_REQUESTED_AT, System.currentTimeMillis()).apply();
+            }
+
+            @Override public void onError(String message) {
+                assistanceCallRequestInFlight = false;
+                // Do not keep retrying a potentially costly call request in this session.
+                Log.w(BOOKING_LOG, "Assistance-call request was not accepted: " + message);
+            }
+        });
     }
 
     private void showMandatoryMobileNumberDialog(boolean continueWithLocationGate) {
@@ -4928,6 +5053,7 @@ public class MainActivity extends Activity {
         setCurrentScreen("detail");
         showAppChrome();
         selectedService = service;
+        recordServiceExploration(service);
         setActiveNav(null);
         resetScreen();
         updateFooter(service, "Book Slot\nNo upfront pay", view -> showBooking(service));
@@ -11869,7 +11995,7 @@ public class MainActivity extends Activity {
                 JSONObject payload = new JSONObject();
                 try {
                     payload.put("address", updatedAddress);
-                    payload.put("city", "Guwahati");
+                    payload.put("city", bookingCity(updatedAddress));
                     payload.put("lat", lat);
                     payload.put("lng", lng);
                     payload.put("expectedVersion", bookingLocationVersionCache.containsKey(booking.getId()) ? bookingLocationVersionCache.get(booking.getId()) : 1);
@@ -19539,7 +19665,7 @@ public class MainActivity extends Activity {
             payload.put("serviceName", service.getName());
             payload.put("issue", bookingIssueText(booking));
             payload.put("address", details.getAddress());
-            payload.put("city", "Guwahati");
+            payload.put("city", bookingCity(details.getAddress()));
             payload.put("lat", serviceLat);
             payload.put("lng", serviceLng);
             payload.put("price", service.getPrice());
@@ -22718,6 +22844,14 @@ public class MainActivity extends Activity {
                     && !"india".equals(lower) && !"assam".equals(lower)) return candidate;
         }
         return "";
+    }
+
+    private String bookingCity(String address) {
+        String enteredCity = fieldValue(cityInput);
+        if (!TextUtils.isEmpty(enteredCity)) return enteredCity;
+        String addressCity = cityFromAddressText(address);
+        if (!TextUtils.isEmpty(addressCity)) return addressCity;
+        return secureString(KEY_DETECTED_HOME_CITY, "").trim();
     }
 
     /**
