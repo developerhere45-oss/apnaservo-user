@@ -477,7 +477,10 @@ public class MainActivity extends Activity {
     // many cards; allowing every card to pulse keeps the render thread busy while the user is
     // scrolling, particularly on mid-range phones.
     private static final int MAX_AMBIENT_ANIMATORS = 5;
+    private static final int MAX_SCREEN_ENTRANCE_ANIMATIONS = 8;
     private final List<Animator> ambientAnimators = new ArrayList<>();
+    private int screenEntranceAnimationCount;
+    private long lastBottomNavigationTapAt;
     private Runnable carouselRunnable;
     private Runnable partnerAssignmentRunnable;
     private Runnable bookingStatusRunnable;
@@ -734,10 +737,18 @@ public class MainActivity extends Activity {
         mainScroll.setClipToPadding(false);
         setupBottomNavItems();
 
-        navHome.setOnClickListener(view -> showHome());
-        navBookings.setOnClickListener(view -> showBookingsWithLoading());
-        navOffers.setOnClickListener(view -> showHome());
-        navProfile.setOnClickListener(view -> showProfile());
+        navHome.setOnClickListener(view -> {
+            if (acceptBottomNavigation("home")) showHome();
+        });
+        navBookings.setOnClickListener(view -> {
+            if (acceptBottomNavigation("bookings")) showBookingsWithLoading();
+        });
+        navOffers.setOnClickListener(view -> {
+            if (acceptBottomNavigation("home")) showHome();
+        });
+        navProfile.setOnClickListener(view -> {
+            if (acceptBottomNavigation("profile")) showProfile();
+        });
         navAdd.setVisibility(View.GONE);
         bottomNav.setElevation(dp(16));
         floatingFooter.setElevation(dp(18));
@@ -2738,6 +2749,21 @@ public class MainActivity extends Activity {
                 ((ViewGroup) view.getParent()).removeView(view);
             }
         }
+    }
+
+    /** Prevent repeated bottom-bar taps from rebuilding the same full view hierarchy. */
+    private boolean acceptBottomNavigation(String destination) {
+        if (!activityForeground) return false;
+        long now = SystemClock.elapsedRealtime();
+        if (now - lastBottomNavigationTapAt < 280L) return false;
+        lastBottomNavigationTapAt = now;
+        if (TextUtils.equals(destination, currentScreen)) {
+            if ("home".equals(destination) || "bookings".equals(destination)) {
+                mainScroll.smoothScrollTo(0, 0);
+            }
+            return false;
+        }
+        return true;
     }
 
     private void showHome() {
@@ -26990,16 +27016,24 @@ public class MainActivity extends Activity {
 
     private void animateIn(View view, int delayMs) {
         view.animate().cancel();
+        // A page can contain many tiles. Restrict entrance motion to the first visible cards;
+        // animating every tile makes the compositor compete with scrolling.
+        if (isConstrainedDevice() || !activityForeground
+                || screenEntranceAnimationCount++ >= MAX_SCREEN_ENTRANCE_ANIMATIONS) {
+            view.setAlpha(1f);
+            view.setTranslationY(0f);
+            return;
+        }
         view.setAlpha(0f);
         // Keep page entry motion cheap. Large translations and long staggered
         // animations make service screens visibly rebuild on older devices.
-        view.setTranslationY(isConstrainedDevice() ? 0f : dp(6));
-        int startDelay = isConstrainedDevice() ? 0 : Math.min(delayMs, 70);
+        view.setTranslationY(dp(6));
+        int startDelay = Math.min(delayMs, 70);
         Runnable startAnimation = () -> view.animate()
                 .alpha(1f)
                 .translationY(0f)
                 .setStartDelay(startDelay)
-                .setDuration(isConstrainedDevice() ? 120 : 180)
+                .setDuration(180)
                 .setInterpolator(new DecelerateInterpolator())
                 .start();
         if (view.isAttachedToWindow()) {
@@ -27395,6 +27429,7 @@ public class MainActivity extends Activity {
     }
 
     private void resetScreen() {
+        screenEntranceAnimationCount = 0;
         stopBannerCarousel();
         stopHomeTrustRibbon();
         if (!isAmountApprovalPending()) {
