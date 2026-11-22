@@ -29,8 +29,8 @@ android {
         targetSdk = 36
         // Never let a production build silently fall back below this release.
         // Play updates must remain strictly monotonic.
-        versionCode = (project.findProperty("VERSION_CODE") ?: "27").toString().toInteger()
-        versionName = (project.findProperty("VERSION_NAME") ?: "1.0.26").toString()
+        versionCode = (project.findProperty("VERSION_CODE") ?: "39").toString().toInteger()
+        versionName = (project.findProperty("VERSION_NAME") ?: "1.0.27").toString()
         buildConfigField "String", "APNA_SERVO_API_BASE_URL", "\"${project.findProperty("APNA_SERVO_API_BASE_URL") ?: "https://apnaservobk-98gz.onrender.com/api"}\""
         buildConfigField "String", "APNA_SERVO_SOCKET_URL", "\"${project.findProperty("APNA_SERVO_SOCKET_URL") ?: "https://apnaservobk-98gz.onrender.com"}\""
         buildConfigField "String", "APNA_SERVO_API_BACKUP_URL", "\"${project.findProperty("APNA_SERVO_API_BACKUP_URL") ?: "https://apnaservobk-netx.onrender.com/api"}\""
