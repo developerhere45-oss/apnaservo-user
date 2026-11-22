@@ -4,6 +4,7 @@ import android.annotation.SuppressLint;
 import android.Manifest;
 import android.animation.AnimatorSet;
 import android.animation.Animator;
+import android.animation.AnimatorListenerAdapter;
 import android.animation.LayoutTransition;
 import android.animation.ObjectAnimator;
 import android.animation.ValueAnimator;
@@ -472,6 +473,11 @@ public class MainActivity extends Activity {
     private boolean restoringScreen;
     private final Handler carouselHandler = new Handler(Looper.getMainLooper());
     private final Handler bookingsLoadingHandler = new Handler(Looper.getMainLooper());
+    // Decorative infinite animations are intentionally budgeted. A rich Home page can contain
+    // many cards; allowing every card to pulse keeps the render thread busy while the user is
+    // scrolling, particularly on mid-range phones.
+    private static final int MAX_AMBIENT_ANIMATORS = 5;
+    private final List<Animator> ambientAnimators = new ArrayList<>();
     private Runnable carouselRunnable;
     private Runnable partnerAssignmentRunnable;
     private Runnable bookingStatusRunnable;
@@ -1569,6 +1575,7 @@ public class MainActivity extends Activity {
     protected void onPause() {
         pauseAssistanceEngagement();
         activityForeground = false;
+        stopAmbientAnimations();
         // The short high-accuracy request is only useful while this Home screen is visible.
         // Cancelling it here avoids any background GPS work.
         clearHomeAvailabilityLocationRequest();
@@ -1596,6 +1603,7 @@ public class MainActivity extends Activity {
         if (appControlRepository != null) appControlRepository.dispose();
         stopBannerCarousel();
         stopHomeTrustRibbon();
+        stopAmbientAnimations();
         if (partnerAssignmentRunnable != null) {
             carouselHandler.removeCallbacks(partnerAssignmentRunnable);
         }
@@ -3010,6 +3018,9 @@ public class MainActivity extends Activity {
      */
     private void renderHomeSection(int renderGeneration, int step) {
         if (activityDestroyed || renderGeneration != homeRenderGeneration || !"home".equals(currentScreen)) return;
+        // Do not animate a layout pass for every staged Home section. It causes repeated full
+        // hierarchy measurements while cards/images are still being added.
+        screenContent.setLayoutTransition(null);
         int sectionStep = step;
         int previousChildCount = screenContent.getChildCount();
         if (step >= 1 && step <= 5) sectionStep = java.util.Arrays.asList("quick_services", "commercial", "popular_services", "more_services", "feature_strip").indexOf(appControl.sectionOrder.get(step - 1)) + 1;
@@ -3051,6 +3062,7 @@ public class MainActivity extends Activity {
                 if (appControl.uiSectionVisible("feature_strip")) addFeatureStrip();
                 break;
             default:
+                installSmoothContentTransitions();
                 return;
         }
         if (step > 0 && appControl.sectionSpacing >= 0 && screenContent.getChildCount() > previousChildCount) {
@@ -3061,7 +3073,9 @@ public class MainActivity extends Activity {
                 section.setLayoutParams(params);
             }
         }
-        carouselHandler.postDelayed(() -> renderHomeSection(renderGeneration, step + 1), 16L);
+        // Leave room for touch, scrolling and image-decode callbacks between card batches.
+        carouselHandler.postDelayed(() -> renderHomeSection(renderGeneration, step + 1),
+                isConstrainedDevice() ? 32L : 28L);
     }
 
     private void addRemoteHeaderNotices() {
@@ -10505,7 +10519,7 @@ public class MainActivity extends Activity {
         animator.setDuration(durationMs);
         animator.setRepeatCount(ValueAnimator.INFINITE);
         animator.setInterpolator(new LinearInterpolator());
-        animator.start();
+        if (!startAmbientAnimation(animator)) return;
         view.addOnAttachStateChangeListener(new View.OnAttachStateChangeListener() {
             @Override
             public void onViewAttachedToWindow(View attachedView) {
@@ -26929,7 +26943,10 @@ public class MainActivity extends Activity {
                     animator.setRepeatCount(ValueAnimator.INFINITE);
                     animator.setRepeatMode(ValueAnimator.RESTART);
                     animator.setInterpolator(new AccelerateDecelerateInterpolator());
-                    animator.start();
+                    if (!startAmbientAnimation(animator)) {
+                        attachedView.setTranslationX(0f);
+                        return;
+                    }
                     cancelOnDetach(attachedView, animator);
                 });
             }
@@ -27013,7 +27030,10 @@ public class MainActivity extends Activity {
         alpha.setRepeatCount(ValueAnimator.INFINITE);
         alpha.setRepeatMode(ValueAnimator.REVERSE);
         alpha.setInterpolator(new AccelerateDecelerateInterpolator());
-        alpha.start();
+        if (!startAmbientAnimation(alpha)) {
+            view.setAlpha(maxAlpha);
+            return;
+        }
         cancelOnDetach(view, alpha);
     }
 
@@ -27033,8 +27053,38 @@ public class MainActivity extends Activity {
         }
         AnimatorSet pulse = new AnimatorSet();
         pulse.playTogether(scaleX, scaleY);
-        pulse.start();
+        if (!startAmbientAnimation(pulse)) {
+            view.setScaleX(1f);
+            view.setScaleY(1f);
+            return;
+        }
         cancelOnDetach(view, pulse);
+    }
+
+    /** Starts a non-essential looping animation only while there is frame budget for it. */
+    private boolean startAmbientAnimation(Animator animator) {
+        if (animator == null || isConstrainedDevice() || !activityForeground
+                || ambientAnimators.size() >= MAX_AMBIENT_ANIMATORS) {
+            return false;
+        }
+        ambientAnimators.add(animator);
+        animator.addListener(new AnimatorListenerAdapter() {
+            @Override public void onAnimationCancel(Animator animation) {
+                ambientAnimators.remove(animation);
+            }
+
+            @Override public void onAnimationEnd(Animator animation) {
+                ambientAnimators.remove(animation);
+            }
+        });
+        animator.start();
+        return true;
+    }
+
+    private void stopAmbientAnimations() {
+        if (ambientAnimators.isEmpty()) return;
+        for (Animator animator : new ArrayList<>(ambientAnimators)) animator.cancel();
+        ambientAnimators.clear();
     }
 
     private void cancelOnDetach(View view, Animator animator) {
