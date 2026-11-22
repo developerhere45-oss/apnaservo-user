@@ -100,6 +100,7 @@ import com.fixmate.app.data.ServiceCatalog;
 import com.fixmate.app.model.Booking;
 import com.fixmate.app.model.BookingItem;
 import com.fixmate.app.model.CustomerDetails;
+import com.fixmate.app.model.CleaningService;
 import com.fixmate.app.model.Service;
 import com.fixmate.app.util.SecurePrefs;
 import com.bumptech.glide.Glide;
@@ -434,12 +435,16 @@ public class MainActivity extends Activity {
     private final Map<String, Boolean> bookingChatRendered = new HashMap<>();
     private String selectedDate = "";
     private String selectedTime = "";
+    private String bookingType = "instant";
+    private String scheduledDate = "";
+    private String scheduledSlot = "";
     private String bookingPrimaryPhone = "";
     private String bookingAlternatePhone = "";
     private LinearLayout bookingContactContainer;
     private String bookingAddressMode = "";
     private String selectedServiceTier = "Normal";
     private String selectedLaundryServiceType = "Wash & Fold";
+    private String selectedRequestedPartnerId = "";
     private final Map<String, Integer> selectedLaundryItems = new LinkedHashMap<>();
     private final Map<String, FrameLayout> laundryItemCards = new HashMap<>();
     private final Map<String, EditText> remoteBookingInputs = new LinkedHashMap<>();
@@ -5488,6 +5493,8 @@ public class MainActivity extends Activity {
         bookingStepperContainer = null;
         selectedDate = "";
         selectedTime = "";
+        bookingType = "instant";
+        selectedRequestedPartnerId = "";
         bookingPrimaryPhone = authenticatedPrimaryPhone();
         bookingAlternatePhone = "";
         bookingContactContainer = null;
@@ -12826,6 +12833,55 @@ public class MainActivity extends Activity {
     }
 
     private void addCleaningBookingOptions() {
+        if (bookingForm == null) return;
+        LinearLayout section = vertical();
+        section.setPadding(0, dp(12), 0, dp(10));
+        section.addView(text("Select Cleaning Service", 15, BLACK, true));
+        section.addView(text("Choose the service you need", 11, MUTED, false), margin(-1, -2, 0, 3, 0, 10));
+        List<CleaningService> items = ServiceCatalog.cleaningServices();
+        List<LinearLayout> cards = new ArrayList<>();
+        for (CleaningService item : items) {
+            LinearLayout card = vertical();
+            card.setTag(item.getId()); card.setPadding(dp(14), dp(11), dp(14), dp(11));
+            LinearLayout row = horizontal(); row.setGravity(Gravity.CENTER_VERTICAL);
+            LinearLayout copy = vertical();
+            copy.addView(text(item.getName(), 14, BLACK, true));
+            if (!TextUtils.isEmpty(item.getDurationLabel())) copy.addView(text(item.getDurationLabel(), 11, MUTED, false));
+            row.addView(copy, new LinearLayout.LayoutParams(0, -2, 1));
+            LinearLayout price = vertical(); price.setGravity(Gravity.RIGHT);
+            price.addView(text("₹" + item.getOfferPrice(), 16, BLACK, true));
+            if (item.getOriginalPrice() > 0) {
+                SpannableString crossed = new SpannableString("₹" + item.getOriginalPrice());
+                crossed.setSpan(new android.text.style.StrikethroughSpan(), 0, crossed.length(), Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+                TextView old = text("", 11, MUTED, false); old.setText(crossed); price.addView(old);
+            }
+            row.addView(price); card.addView(row);
+            TextView details = text("Included / not included", 11, ORANGE, true);
+            details.setPadding(0, dp(7), 0, 0); card.addView(details);
+            details.setOnClickListener(view -> showCleaningDetails(item));
+            card.setOnClickListener(view -> { selectedCleaningType = item.getName(); for (LinearLayout other : cards) styleCleaningPackage(other, item.getId().equals(other.getTag())); });
+            cards.add(card); styleCleaningPackage(card, item == items.get(0)); section.addView(card, margin(-1, -2, 0, 0, 0, 8));
+        }
+        if (!items.isEmpty()) selectedCleaningType = items.get(0).getName();
+        bookingForm.addView(section); bookingForm.addView(insetDivider(0));
+    }
+
+    private void styleCleaningPackage(LinearLayout card, boolean selected) {
+        card.setBackground(stroke(selected ? Color.rgb(255, 247, 249) : Color.WHITE, selected ? BOOKING_THEME : Color.rgb(231, 224, 225), dp(12)));
+        card.setElevation(selected ? dp(2) : 0);
+    }
+
+    private void showCleaningDetails(CleaningService item) {
+        AlertDialog dialog = new AlertDialog.Builder(this).create();
+        LinearLayout body = vertical(); body.setPadding(dp(20), dp(20), dp(20), dp(16)); body.setBackground(bookingOuterDrawable());
+        body.addView(text(item.getName(), 20, BLACK, true)); body.addView(text("What's included", 13, GREEN, true), margin(-1, -2, 0, 14, 0, 5));
+        for (String line : item.getIncluded()) body.addView(text("✓  " + line, 12, BLACK, false));
+        body.addView(text("What's not included", 13, Color.rgb(200, 60, 60), true), margin(-1, -2, 0, 14, 0, 5));
+        for (String line : item.getExcluded()) body.addView(text("×  " + line, 12, MUTED, false));
+        TextView close = orangeButton("Close"); close.setOnClickListener(v -> dialog.dismiss()); body.addView(close, margin(-1, 50, 0, 16, 0, 0)); dialog.setView(body); dialog.show();
+    }
+
+    private void addLegacyCleaningBookingOptions() {
         LinearLayout section = vertical();
         section.setPadding(0, dp(12), 0, dp(10));
         section.addView(text("Select Cleaning Type", 15, BLACK, true));
@@ -13972,6 +14028,13 @@ public class MainActivity extends Activity {
         summary.addView(confirmRow("Service", service.getName(), service), margin(-1, 64, 0, 18, 0, 8));
         summary.addView(confirmEditableRow("Address", bookingAddressPreview(), R.drawable.booking_icon_service_address, "Change", view -> showAddressEditDialog(service)), margin(-1, -2, 0, 0, 0, 0));
         summary.addView(confirmEditableRow("Contact", formatIndianPhone(bookingPrimaryPhone) + (isValidCustomerMobile(bookingAlternatePhone) ? "\nAlternate: " + formatIndianPhone(bookingAlternatePhone) : ""), "☎", "Edit", view -> showBookingPhoneEditor(true)), margin(-1, -2, 0, 8, 0, 0));
+        String timing = "scheduled".equals(bookingType) ? (TextUtils.isEmpty(selectedDate) ? "Choose date & time" : selectedDate + " • " + selectedTime) : "Within ~2 hours";
+        summary.addView(confirmEditableRow("When", timing, "⏱", "Edit", view -> showBookingTypeDialog(service)), margin(-1, -2, 0, 0, 0, 0));
+        String partner = TextUtils.isEmpty(selectedRequestedPartnerId) ? "Nearest available partner" : "Partner ID: " + selectedRequestedPartnerId;
+        summary.addView(confirmEditableRow("Partner", partner, "★", TextUtils.isEmpty(selectedRequestedPartnerId) ? "Select" : "Clear", view -> {
+            if (!TextUtils.isEmpty(selectedRequestedPartnerId)) { selectedRequestedPartnerId = ""; showBookingConfirm(service); }
+            else showRequestedPartnerDialog(service);
+        }), margin(-1, -2, 0, 0, 0, 0));
         animateIn(summary, 80);
         screenContent.addView(summary, margin(-1, -2, 16, 8, 16, 14));
 
@@ -14124,6 +14187,22 @@ public class MainActivity extends Activity {
         sheet.addView(save, margin(-1, 52, 0, 8, 0, 0));
         dialog.setView(sheet);
         dialog.show();
+    }
+
+    private void showBookingTypeDialog(Service service) {
+        new AlertDialog.Builder(this)
+                .setTitle("When do you need service?")
+                .setSingleChoiceItems(new String[]{"Within ~2 hours", "Schedule a date & time"}, "scheduled".equals(bookingType) ? 1 : 0,
+                        (dialog, which) -> { bookingType = which == 0 ? "instant" : "scheduled"; dialog.dismiss(); if (which == 1) showDateTimeEditDialog(service); else showBookingConfirm(service); })
+                .setNegativeButton("Cancel", null).show();
+    }
+
+    private void showRequestedPartnerDialog(Service service) {
+        final EditText input = new EditText(this); input.setHint("Partner public ID (optional)"); input.setSingleLine(true); input.setText(selectedRequestedPartnerId);
+        new AlertDialog.Builder(this).setTitle("Request a partner")
+                .setMessage("Enter the partner's public ID. Leave it blank to let us find the nearest available partner.")
+                .setView(input).setNegativeButton("Cancel", null)
+                .setPositiveButton("Save", (dialog, which) -> { selectedRequestedPartnerId = input.getText().toString().trim().toUpperCase(Locale.US); showBookingConfirm(service); }).show();
     }
 
     private void showAddressEditDialog(Service service) {
@@ -19673,6 +19752,10 @@ public class MainActivity extends Activity {
             // date/time must never be treated as a committed partner time slot.
             payload.put("slot", "");
             payload.put("schedulePending", true);
+            boolean scheduled = "scheduled".equals(bookingType);
+            payload.put("bookingType", scheduled ? "scheduled" : "instant");
+            payload.put("scheduledDate", scheduled ? selectedDate : "");
+            payload.put("scheduledSlot", scheduled ? selectedTime : "");
             payload.put("userName", details.getName());
             payload.put("userPhone", phone);
             payload.put("customerPhone", phone);
@@ -19689,6 +19772,7 @@ public class MainActivity extends Activity {
                 payload.put("pricingOptionId", selectedCleaningPricingOptionId);
             }
             payload.put("formConfigVersion", appControl == null ? "" : appControl.version);
+            if (!TextUtils.isEmpty(selectedRequestedPartnerId)) payload.put("requestedPartnerId", selectedRequestedPartnerId);
         } catch (Exception ignored) {
         }
         return payload;
@@ -19779,6 +19863,11 @@ public class MainActivity extends Activity {
         payload.put("slot", "");
         payload.put("time", "");
         payload.put("schedulePending", true);
+        boolean scheduledBooking = "scheduled".equals(bookingType);
+        payload.put("bookingType", scheduledBooking ? "scheduled" : "instant");
+        payload.put("scheduledDate", scheduledBooking ? selectedDate : "");
+        payload.put("scheduledSlot", scheduledBooking ? selectedTime : "");
+        payload.put("requestedPartnerId", selectedRequestedPartnerId);
         payload.put("defaultAmount", service.getPrice());
         payload.put("price", service.getPrice());
         payload.put("status", "pending");

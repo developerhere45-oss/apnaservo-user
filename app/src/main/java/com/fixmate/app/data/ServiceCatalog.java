@@ -1,6 +1,7 @@
 package com.fixmate.app.data;
 
 import com.fixmate.app.model.Service;
+import com.fixmate.app.model.CleaningService;
 
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -8,6 +9,32 @@ import java.util.List;
 
 public final class ServiceCatalog {
     private ServiceCatalog() {
+    }
+
+    public static List<CleaningService> cleaningServices() {
+        List<CleaningService> list = new ArrayList<>();
+        list.add(new CleaningService("festive_home_help", "Festive Home Help", "1.5 hrs", 199, 0,
+                new String[]{"General tidying & dusting", "Surface wipe-down", "Waste collection", "Floor sweeping & mopping"},
+                new String[]{"Deep scrubbing", "Appliance cleaning", "Laundry", "Outside-premises work"}));
+        list.add(new CleaningService("hourly_cleaning", "Hourly Cleaning Service", "", 79, 99,
+                new String[]{"General room cleaning", "Dusting surfaces", "Floor sweeping & mopping", "Waste disposal"},
+                new String[]{"Deep scrubbing", "Bathroom cleaning", "Kitchen appliances", "Laundry"}));
+        list.add(new CleaningService("packing_unpacking", "Packing & Unpacking", "", 59, 79,
+                new String[]{"Box packing with care", "Labelling boxes", "Unpacking & arranging", "Waste disposal after unpacking"},
+                new String[]{"Furniture assembly", "Heavy lifting beyond standard items", "Electrical connections", "Painting or repairs"}));
+        list.add(new CleaningService("kitchen_cleaning", "Kitchen Cleaning", "", 79, 99,
+                new String[]{"Counter & slab wipe-down", "Sink scrubbing", "Stovetop cleaning", "Cabinet exterior wipe", "Floor mopping"},
+                new String[]{"Inside cabinet cleaning", "Chimney or exhaust deep clean", "Appliance interior cleaning", "Pest treatment"}));
+        list.add(new CleaningService("fridge_cleaning", "Fridge Cleaning", "", 59, 0,
+                new String[]{"Interior shelf & drawer wipe", "Door seal cleaning", "Exterior surface wipe", "Odour removal"},
+                new String[]{"Repair or servicing", "Gas refilling", "Electrical work", "Freezer deep defrost"}));
+        list.add(new CleaningService("kitchen_prep", "Kitchen Prep", "", 119, 159,
+                new String[]{"Vegetable & ingredient prep", "Basic chopping & sorting", "Counter setup", "Utensil arrangement"},
+                new String[]{"Cooking", "Grocery shopping", "Appliance operation", "Serving or plating"}));
+        list.add(new CleaningService("bathroom_cleaning", "Bathroom Cleaning", "", 79, 99,
+                new String[]{"Toilet scrubbing & disinfection", "Sink & tap cleaning", "Floor scrubbing", "Mirror & surface wipe", "Waste bin emptying"},
+                new String[]{"Plumbing repairs", "Tile re-grouting", "Pest treatment", "Exhaust fan servicing"}));
+        return list;
     }
 
     public static List<String> categories() {
