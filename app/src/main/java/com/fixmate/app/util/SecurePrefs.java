@@ -72,6 +72,8 @@ public final class SecurePrefs {
             return;
         }
         try {
+            String previous = preferences.getString(key, null);
+            if (previous != null && value.equals(decoded.get(previous))) return;
             Cipher cipher = Cipher.getInstance(TRANSFORMATION);
             // Android Keystore requires a provider-generated IV when randomized
             // encryption is enabled. A caller-supplied IV rejects every write.
@@ -81,9 +83,9 @@ public final class SecurePrefs {
             byte[] packed = new byte[iv.length + cipherText.length];
             System.arraycopy(iv, 0, packed, 0, iv.length);
             System.arraycopy(cipherText, 0, packed, iv.length, cipherText.length);
-            preferences.edit()
-                    .putString(key, ENCRYPTED_PREFIX + Base64.encodeToString(packed, Base64.NO_WRAP))
-                    .apply();
+            String encoded = ENCRYPTED_PREFIX + Base64.encodeToString(packed, Base64.NO_WRAP);
+            preferences.edit().putString(key, encoded).apply();
+            decoded.put(encoded, value);
         } catch (Exception ignored) {
             remove(key);
         }
