@@ -864,19 +864,19 @@ public class MainActivity extends Activity {
         requestNotificationPermission();
         signInFirebase();
         recoverCustomerIdentityFromFirebase();
-        restoreLatestActiveBookingFromStore();
-        refreshFcmToken();
-        syncCustomerProfileToBackend();
-        flushQueuedCustomerSupportMessages();
-        flushQueuedBookingChatMessages();
-        restorePendingBookingSubmission();
-        syncCachedBookingsWithBackend();
-        // Keep the admin-control socket alive even without an active booking,
-        // so a published status reaches an open customer app immediately.
-        startBackendSocket();
-        if (latestBooking != null) {
-            startPartnerAssignmentSync();
-        }
+        // Spread independent startup work over separate main-loop turns, so Home gets
+        // a chance to draw and respond to taps while network clients initialise.
+        carouselHandler.postDelayed(() -> { if (!activityDestroyed && loggedIn) refreshFcmToken(); }, 250L);
+        carouselHandler.postDelayed(() -> { if (!activityDestroyed && loggedIn) syncCustomerProfileToBackend(); }, 500L);
+        carouselHandler.postDelayed(() -> { if (!activityDestroyed && loggedIn) flushQueuedCustomerSupportMessages(); }, 750L);
+        carouselHandler.postDelayed(() -> { if (!activityDestroyed && loggedIn) flushQueuedBookingChatMessages(); }, 1000L);
+        carouselHandler.postDelayed(() -> { if (!activityDestroyed && loggedIn) restorePendingBookingSubmission(); }, 1250L);
+        carouselHandler.postDelayed(() -> { if (!activityDestroyed && loggedIn) syncCachedBookingsWithBackend(); }, 1500L);
+        carouselHandler.postDelayed(() -> {
+            if (activityDestroyed || !loggedIn) return;
+            startBackendSocket();
+            if (latestBooking != null) startPartnerAssignmentSync();
+        }, 1750L);
     }
 
     private void registerNetworkSync() {
@@ -1745,20 +1745,8 @@ public class MainActivity extends Activity {
      */
     private void installSmoothContentTransitions() {
         if (screenContent == null) return;
-        LayoutTransition transition = new LayoutTransition();
-        transition.setAnimateParentHierarchy(false);
-        transition.setDuration(LayoutTransition.APPEARING, isConstrainedDevice() ? 0L : 170L);
-        transition.setDuration(LayoutTransition.DISAPPEARING, isConstrainedDevice() ? 0L : 130L);
-        transition.setDuration(LayoutTransition.CHANGE_APPEARING, isConstrainedDevice() ? 0L : 220L);
-        transition.setDuration(LayoutTransition.CHANGE_DISAPPEARING, isConstrainedDevice() ? 0L : 190L);
-        transition.setStartDelay(LayoutTransition.APPEARING, 0L);
-        transition.setStartDelay(LayoutTransition.DISAPPEARING, 0L);
-        transition.setStagger(LayoutTransition.APPEARING, 18L);
-        if (!isConstrainedDevice()) {
-            transition.enableTransitionType(LayoutTransition.CHANGING);
-            transition.setDuration(LayoutTransition.CHANGING, 220L);
-        }
-        screenContent.setLayoutTransition(transition);
+        // Animating changes to this large root repeatedly remeasures the entire page.
+        screenContent.setLayoutTransition(null);
     }
 
     /** A single GPU-only screen entrance shared by login, Home, bookings, profile and flows. */
@@ -2782,7 +2770,7 @@ public class MainActivity extends Activity {
         showLatestBookingFooter(false);
         renderHomeSection(renderGeneration, 0);
         carouselHandler.postDelayed(() -> checkHomeServiceAvailability(false), 250L);
-        showHomeLaunchLoadingOnce();
+        // Leave Home interactive as soon as its first section is drawn.
     }
 
     @SuppressLint("MissingPermission")
@@ -21429,20 +21417,6 @@ public class MainActivity extends Activity {
             return "OTP verification failed. Please try again.";
         }
         String normalized = message.toLowerCase(Locale.US);
-        if (normalized.contains("route not found") || normalized.contains("/otp/send") || normalized.contains("/otp/verify")) {
-            return "OTP service is not deployed yet. Please redeploy the backend and try again.";
-        }
-        if (normalized.contains("authenticationfailure") || normalized.contains("authentication failure")
-                || normalized.contains("unauthorized") || message.contains("401") || message.contains("403")) {
-            return "MSG91 rejected the OTP Widget credential. Copy this widget's Token into MSG91_TOKEN_AUTH on Render, then redeploy.";
-        }
-        if (normalized.contains("otp provider is not configured")) {
-            return "OTP service is not configured. Set MSG91_WIDGET_ID and MSG91_TOKEN_AUTH on the backend, then redeploy.";
-        }
-        if (normalized.contains("invalid request") || normalized.contains("msg91")
-                || normalized.contains("authkey") || normalized.contains("widget") || normalized.contains("provider")) {
-            return "OTP provider rejected the request. Check MSG91 auth key, widget ID, and mobile integration settings.";
-        }
         if (normalized.contains("invalid otp") || normalized.contains("invalid verification") || normalized.contains("incorrect otp")) {
             return "Invalid OTP. Please check the code and try again.";
         }
@@ -21450,13 +21424,13 @@ public class MainActivity extends Activity {
             return "OTP expired. Please request a new OTP.";
         }
         if (normalized.contains("firebase") || normalized.contains("custom token") || normalized.contains("session was not created")) {
-            return "OTP verified, but Firebase login could not be completed. Check FIREBASE_PROJECT_ID and FIREBASE_SERVICE_ACCOUNT_JSON on the backend.";
+            return "Unable to complete login right now. Please try again.";
         }
         if (normalized.contains("timeout") || normalized.contains("timed out")
                 || normalized.contains("network temporarily unavailable") || normalized.contains("failed to connect")) {
             return NetworkError.body(NetworkError.TIMEOUT);
         }
-        return NetworkError.body(NetworkError.safe(message));
+        return "Unable to process OTP right now. Please try again later.";
     }
 
     private String safeUserError(String message) {
