@@ -25,6 +25,7 @@ public final class SecurePrefs {
     private static final int IV_BYTES = 12;
 
     private final SharedPreferences preferences;
+    private final android.util.LruCache<String, String> decoded = new android.util.LruCache<>(32);
 
     public SecurePrefs(Context context, String name) {
         preferences = context.getApplicationContext().getSharedPreferences(name, Context.MODE_PRIVATE);
@@ -40,6 +41,8 @@ public final class SecurePrefs {
             return stored;
         }
         try {
+            String cached = decoded.get(stored);
+            if (cached != null) return cached;
             byte[] packed = Base64.decode(stored.substring(ENCRYPTED_PREFIX.length()), Base64.NO_WRAP);
             if (packed.length <= IV_BYTES) {
                 remove(key);
@@ -51,7 +54,9 @@ public final class SecurePrefs {
             System.arraycopy(packed, IV_BYTES, cipherText, 0, cipherText.length);
             Cipher cipher = Cipher.getInstance(TRANSFORMATION);
             cipher.init(Cipher.DECRYPT_MODE, secretKey(), new GCMParameterSpec(GCM_TAG_BITS, iv));
-            return new String(cipher.doFinal(cipherText), StandardCharsets.UTF_8);
+            String value = new String(cipher.doFinal(cipherText), StandardCharsets.UTF_8);
+            decoded.put(stored, value);
+            return value;
         } catch (Exception ignored) {
             remove(key);
             return fallback;
@@ -89,6 +94,7 @@ public final class SecurePrefs {
     }
 
     public void clear() {
+        decoded.evictAll();
         preferences.edit().clear().apply();
     }
 
